@@ -1,3 +1,3 @@
 # CSCI334
-CSCI334 project
+Offline json server API: 
 https://github.com/typicode/json-server.git
