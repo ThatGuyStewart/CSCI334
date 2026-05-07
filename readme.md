@@ -8,3 +8,6 @@ SQLpostgre settings:
   database: PMS
   username: postgres
   password: data
+
+So long as SQLpostgre is running with these values, the program will automatically connect to the database, create the schema, and seed test data.
+Once the server is running, connect to https://127.0.0.1:8080/test in your browser to view the test page
