@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Parking Server Test Page</title>
+	<style>
+		body {
+			font-family: Arial, sans-serif;
+			margin: 2rem;
+			background: #f5f7fb;
+			color: #1f2937;
+		}
+
+		h1, h2, h3 {
+			margin-bottom: 0.5rem;
+		}
+
+		.panel {
+			background: white;
+			border-radius: 8px;
+			padding: 1rem;
+			margin-bottom: 1rem;
+			box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+		}
+
+		.form-panel {
+			max-width: 420px;
+		}
+
+		label {
+			display: block;
+			margin-top: 0.75rem;
+			font-weight: 600;
+		}
+
+		input {
+			width: 100%;
+			max-width: 360px;
+			padding: 0.5rem;
+			padding-right: 2.5rem;
+			margin-top: 0.25rem;
+			box-sizing: border-box;
+			display: block;
+		}
+
+		button {
+			margin-top: 0.75rem;
+			margin-right: 0.5rem;
+			padding: 0.6rem 1rem;
+			cursor: pointer;
+		}
+
+		pre {
+			background: #111827;
+			color: #d1fae5;
+			padding: 1rem;
+			border-radius: 6px;
+			overflow-x: auto;
+			overflow-y: auto;
+			height: 240px;
+			max-height: 240px;
+			white-space: pre-wrap;
+			box-sizing: border-box;
+		}
+
+		.small {
+			color: #4b5563;
+			font-size: 0.95rem;
+		}
+
+		.lot-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(420px, 420px));
+			gap: 1rem;
+			margin-top: 1rem;
+			align-items: start;
+			justify-content: start;
+		}
+
+		.lot-card {
+			border: 1px solid #d1d5db;
+			border-radius: 8px;
+			padding: 1rem;
+			background: #f9fafb;
+			cursor: pointer;
+			transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+			width: 420px;
+			min-height: 520px;
+			box-sizing: border-box;
+			overflow: visible;
+			display: flex;
+			flex-direction: column;
+		}
+
+		.lot-card:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 4px 14px rgba(0, 0, 0, 0.10);
+		}
+
+		.lot-card.selected {
+			border-color: #2563eb;
+			box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+		}
+
+		.space-section {
+			margin-top: 1rem;
+		}
+
+		.space-grid {
+			display: grid;
+			grid-template-columns: repeat(10, 32px);
+			grid-auto-rows: 32px;
+			gap: 0.5rem;
+			margin-top: 0.5rem;
+		}
+
+		.space {
+			border-radius: 6px;
+			width: 32px;
+			height: 32px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			text-align: center;
+			font-size: 0.75rem;
+			font-weight: 700;
+			border: 2px solid transparent;
+			box-sizing: border-box;
+		}
+
+		.space.available {
+			background: #22c55e;
+			color: white;
+		}
+
+		.space.unavailable {
+			background: #ef4444;
+			color: white;
+		}
+
+		.space.disabled {
+			border-color: #1d4ed8;
+		}
+
+		.legend {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 1rem;
+			margin-top: 0.75rem;
+			font-size: 0.95rem;
+		}
+
+		.legend-item {
+			display: flex;
+			align-items: center;
+			gap: 0.4rem;
+		}
+
+		.legend-box {
+			width: 16px;
+			height: 16px;
+			border-radius: 4px;
+			display: inline-block;
+		}
+
+		.legend-available {
+			background: #22c55e;
+		}
+
+		.legend-unavailable {
+			background: #ef4444;
+		}
+
+		.legend-disabled {
+			background: #93c5fd;
+			border: 2px solid #1d4ed8;
+			box-sizing: border-box;
+		}
+
+		.bookings-list {
+			display: grid;
+			gap: 0.75rem;
+			margin-top: 1rem;
+		}
+
+		.booking-card {
+			border: 1px solid #d1d5db;
+			border-radius: 8px;
+			padding: 0.75rem;
+			background: #f9fafb;
+			cursor: pointer;
+		}
+
+		.booking-card.selected {
+			border-color: #2563eb;
+			box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+		}
+
+		@media (max-width: 1000px) {
+			.page-layout {
+				grid-template-columns: 1fr;
+			}
+
+			.sidebar {
+				position: static;
+			}
+
+			.lot-grid {
+				grid-template-columns: 1fr;
+			}
+
+			.lot-card {
+				width: 100%;
+				min-height: 520px;
+			}
+		}
+	</style>
+</head>
+<body>
+	<h1>Parking Management Test Page</h1>
+	<p class="small">Default seeded account: <strong>alice@example.com</strong> / <strong>password123</strong></p>
+
+	<div class="page-layout">
+		<div class="sidebar">
+			<div class="panel">
+				<h2>Login</h2>
+
+				<label for="email">Email</label>
+				<input id="email" type="text" value="alice@example.com">
+
+				<label for="password">Password</label>
+				<input id="password" type="password" value="password123">
+
+				<div>
+					<button id="loginButton">HTTP Login</button>
+					<button id="userButton">Get Current User</button>
+					<button id="updatesButton">Get Updates</button>
+				</div>
+			</div>
+
+			<div class="panel">
+				<h2>WebSocket</h2>
+				<div>Status: <span id="wsStatus">Disconnected</span></div>
+				<div>
+					<button id="connectWsButton">Connect</button>
+					<button id="wsLoginButton">Send WS Login</button>
+					<button id="disconnectWsButton">Disconnect</button>
+				</div>
+			</div>
+		</div>
+
+		<div class="main-content">
+			<div class="panel">
+				<h2>Car Park</h2>
+
+				<label for="bookingStart">Booking Start</label>
+				<input id="bookingStart" type="datetime-local">
+
+				<label for="bookingEnd">Booking End</label>
+				<input id="bookingEnd" type="datetime-local">
+
+				<div>
+					<label for="registration">Registration</label>
+					<input id="registration" type="text" value="WEB-TEST-001">
+					<button id="freeBookingsButton">Find Available Reserved Lots</button>
+					<button id="createBookingButton">Create Booking In Selected Lot</button>
+				</div>
+
+				<div class="small">Selected lot: <strong id="selectedLot">None</strong></div>
+
+				<label for="predictionTime">Prediction Time</label>
+				<input id="predictionTime" type="datetime-local">
+
+				<div>
+					<button id="predictNormalButton">Predict Normal</button>
+					<button id="predictDisabledButton">Predict Disabled</button>
+					<button id="loadLotsButton">Load Lot Availability</button>
+				</div>
+
+				<div class="legend">
+					<div class="legend-item"><span class="legend-box legend-available"></span>Available</div>
+					<div class="legend-item"><span class="legend-box legend-unavailable"></span>Unavailable</div>
+					<div class="legend-item"><span class="legend-box legend-disabled"></span>Disabled Space</div>
+				</div>
+
+				<div id="lotGrid" class="lot-grid"></div>
+			</div>
+			<div class="panel">
+				<h2>My Upcoming Bookings</h2>
+
+				<div>
+					<button id="loadBookingsButton">Load My Bookings</button>
+					<button id="updateBookingButton">Update Selected Booking</button>
+					<button id="cancelBookingButton">Cancel Selected Booking</button>
+				</div>
+
+				<div class="small">Selected booking: <strong id="selectedBooking">None</strong></div>
+				<div id="bookingsList" class="bookings-list"></div>
+			</div>
+			<div class="panel">
+				<h2>Log</h2>
+				<pre id="log"></pre>
+			</div>
+		</div>
+	</div>
+
+	<script src="/Javascript/test-client.js"></script>
+</body>
+</html>
