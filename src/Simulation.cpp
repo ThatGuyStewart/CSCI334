@@ -82,6 +82,34 @@ namespace
 		}
 	}
 
+	void trimHistoricalOccupancy(std::vector<int>& remainingOccupiedSlots, int targetOccupied, std::mt19937& rng)
+	{
+		const int currentOccupied = countOccupiedSpaces(remainingOccupiedSlots);
+		if (currentOccupied <= targetOccupied) return;
+
+		std::vector<int> occupiedIndices;
+		occupiedIndices.reserve(remainingOccupiedSlots.size());
+
+		for (int i = 0; i < static_cast<int>(remainingOccupiedSlots.size()); ++i)
+		{
+			if (remainingOccupiedSlots[i] > 0)
+			{
+				occupiedIndices.push_back(i);
+			}
+		}
+
+		std::shuffle(occupiedIndices.begin(), occupiedIndices.end(), rng);
+
+		const int toClear = std::min(
+			currentOccupied - targetOccupied,
+			static_cast<int>(occupiedIndices.size()));
+
+		for (int i = 0; i < toClear; ++i)
+		{
+			remainingOccupiedSlots[occupiedIndices[i]] = 0;
+		}
+	}
+
    void advanceHistoricalOccupancyDurations(std::vector<int>& remainingOccupiedSlots)
 	{
 		for (int& remaining : remainingOccupiedSlots)
@@ -129,7 +157,14 @@ OccupancyParameters Simulation::getOccupancyParameters(const std::tm& localTm) c
 
 	OccupancyParameters parameters{ 0.20, 0.40, 0.10, 0.20 };
 
-	if (weekend || holiday || holidaySeason)
+	if (localTm.tm_hour < 6)
+	{
+		parameters.normalMin = 0.00;
+		parameters.normalMax = 0.05;
+		parameters.disabledMin = 0.00;
+		parameters.disabledMax = 0.05;
+	}
+	else if (weekend || holiday || holidaySeason)
 	{
 		parameters.normalMin = 0.10;
 		parameters.normalMax = 0.20;
@@ -158,6 +193,13 @@ OccupancyParameters Simulation::getOccupancyParameters(const std::tm& localTm) c
 		parameters.normalMax = 1.00 + (- 0.80 * progress);
 		parameters.disabledMin = 0.80 + (-0.80 * progress);
 		parameters.disabledMax = 0.90 + (-0.50 * progress);
+	}
+	else
+	{
+		parameters.normalMin = 0.10;
+		parameters.normalMax = 0.25;
+		parameters.disabledMin = 0.05;
+		parameters.disabledMax = 0.15;
 	}
 
 	return parameters;
@@ -297,7 +339,7 @@ void Simulation::simulateParkingBehavior()
 void Simulation::seedDatabaseWithHistoricalData()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_db.m_dbMutex);
-
+	std::cout << "Seeding database..." << std::endl;
 	if (!m_db.isConnected())
 	{
 		throw std::runtime_error("Database is not connected.");
@@ -309,6 +351,7 @@ void Simulation::seedDatabaseWithHistoricalData()
 
 	const std::vector<std::string> emails =
 	{
+		"admin@example.com",
 		"alice@example.com",
 		"bob@example.com",
 		"charlie@example.com",
@@ -323,9 +366,10 @@ void Simulation::seedDatabaseWithHistoricalData()
 	for (const auto& email : emails)
 	{
 		tx.exec_params(
-			"INSERT INTO accounts (email, password) VALUES ($1, $2)",
+			"INSERT INTO accounts (email, password, is_admin) VALUES ($1, $2, $3)",
 			email,
-			"password123");
+			"password123",
+			email == "admin@example.com");
 	}
 
 	std::vector<int> lotIds;
@@ -373,18 +417,50 @@ void Simulation::seedDatabaseWithHistoricalData()
 	}
 
 	int bookingCounter = 0;
+	const auto now = std::chrono::system_clock::now();
+	const auto currentStartBase = std::chrono::system_clock::time_point(
+		std::chrono::minutes(
+			std::chrono::duration_cast<std::chrono::minutes>(now.time_since_epoch()).count()));
 
 	for (int lotId : lotIds)
 	{
-		const int seededBookingsPerLot = 3;
+		const int currentBookingsPerLot = 2;
+		const int futureBookingsPerLot = 3;
 
-		for (int i = 0; i < seededBookingsPerLot; ++i)
+		for (int i = 0; i < currentBookingsPerLot; ++i)
+		{
+			const std::string& email = emails[bookingCounter % emails.size()];
+			const std::string registration = "LIVE-" + std::to_string(100 + bookingCounter);
+
+			const auto startTime = currentStartBase - std::chrono::minutes(30 + (i * 15));
+			const auto endTime = startTime + std::chrono::hours(2);
+
+			const auto startEpoch = std::chrono::duration_cast<std::chrono::seconds>(startTime.time_since_epoch()).count();
+			const auto endEpoch = std::chrono::duration_cast<std::chrono::seconds>(endTime.time_since_epoch()).count();
+
+			tx.exec_params(
+				"INSERT INTO bookings (lot_id, email, registration, start_time, end_time, status) "
+				"VALUES ($1, $2, $3, to_timestamp($4), to_timestamp($5), 'Active')",
+				lotId,
+				email,
+				registration,
+				startEpoch,
+				endEpoch);
+
+			++bookingCounter;
+		}
+
+		for (int i = 0; i < futureBookingsPerLot; ++i)
 		{
 			const std::string& email = emails[bookingCounter % emails.size()];
 			const std::string registration = "TEST-" + std::to_string(100 + bookingCounter);
-			const auto rawStartTime = std::chrono::system_clock::now() + std::chrono::hours(24 * (bookingCounter + 1));
-			const auto startTime = std::chrono::system_clock::time_point(std::chrono::minutes(std::chrono::duration_cast<std::chrono::minutes>(rawStartTime.time_since_epoch()).count()));
+
+			const auto rawStartTime = currentStartBase + std::chrono::hours(24 * (i + 1)) + std::chrono::hours(lotId);
+			const auto startTime = std::chrono::system_clock::time_point(
+				std::chrono::minutes(
+					std::chrono::duration_cast<std::chrono::minutes>(rawStartTime.time_since_epoch()).count()));
 			const auto endTime = startTime + std::chrono::hours(2);
+
 			const auto startEpoch = std::chrono::duration_cast<std::chrono::seconds>(startTime.time_since_epoch()).count();
 			const auto endEpoch = std::chrono::duration_cast<std::chrono::seconds>(endTime.time_since_epoch()).count();
 
@@ -418,19 +494,28 @@ void Simulation::seedDatabaseWithHistoricalData()
 			const int hour = minutesOfDay / 60;
 			const int minute = minutesOfDay % 60;
 
-			std::time_t currentTime = std::time(nullptr) - static_cast<std::time_t>(daysAgo) * 24 * 60 * 60;
+			std::time_t currentTime = std::time(nullptr);
 			std::tm localTm{};
 #if defined(_WIN32)
 			localtime_s(&localTm, &currentTime);
 #else
 			localTm = *std::localtime(&currentTime);
 #endif
+
+			localTm.tm_mday -= daysAgo;
 			localTm.tm_hour = hour;
 			localTm.tm_min = minute;
 			localTm.tm_sec = 0;
 			localTm.tm_isdst = -1;
 
 			const std::time_t snapshotEpoch = std::mktime(&localTm);
+
+#if defined(_WIN32)
+			localtime_s(&localTm, &snapshotEpoch);
+#else
+			localTm = *std::localtime(&snapshotEpoch);
+#endif
+
 			const OccupancyParameters params = getOccupancyParameters(localTm);
 
 			for (int lotId : lotIds)
@@ -443,6 +528,9 @@ void Simulation::seedDatabaseWithHistoricalData()
 
 				const int targetOccupiedNormal = sampleTargetOccupied(normalCapacity, params.normalMin, params.normalMax, m_rng);
 				const int targetOccupiedDisabled = sampleTargetOccupied(disabledCapacity, params.disabledMin, params.disabledMax, m_rng);
+
+				trimHistoricalOccupancy(normalRemaining, targetOccupiedNormal, m_rng);
+				trimHistoricalOccupancy(disabledRemaining, targetOccupiedDisabled, m_rng);
 
 				addHistoricalOccupancy(normalRemaining, targetOccupiedNormal, m_rng);
 				addHistoricalOccupancy(disabledRemaining, targetOccupiedDisabled, m_rng);
@@ -485,8 +573,16 @@ void Simulation::seedDatabaseWithHistoricalData()
 			}
 		}
 	}
-
+	tx.exec_params(
+		"UPDATE accounts "
+		"SET is_admin = TRUE "
+		"WHERE email = 'admin@example.com';");
 	tx.commit();
+
+	if (!m_db.loadAccounts())
+	{
+		throw std::runtime_error("Failed to reload accounts after seeding.");
+	}
 
 	m_service.loadCarPark();
 
@@ -500,7 +596,6 @@ void Simulation::seedDatabaseWithHistoricalData()
 #else
 		localTm = *std::localtime(&currentTime);
 #endif
-
 		const OccupancyParameters params = getOccupancyParameters(localTm);
 
 		for (auto& [lotId, lot] : m_service.m_carPark->m_lots)

@@ -38,18 +38,25 @@ public:
 		int lotId);
 
 	bool createBooking(
-		int lotId,
 		std::string email,
 		std::string registration,
 		std::chrono::system_clock::time_point start,
-		std::chrono::system_clock::time_point end);
+		std::chrono::system_clock::time_point end,
+		int lotId);
 
 	bool cancelBooking(
-		int lotId,
 		std::string email,
 		std::string registration,
 		std::chrono::system_clock::time_point start,
-		std::chrono::system_clock::time_point end);
+		std::chrono::system_clock::time_point end,
+		int lotId);
+
+	bool bookingExists(
+		std::string email,
+		std::string registration,
+		std::chrono::system_clock::time_point start,
+		std::chrono::system_clock::time_point end,
+		int lotId);
 
 	int getReservedCapacity(int lotId) const;
 
@@ -57,14 +64,8 @@ public:
 	std::vector<std::pair<int, int>> getNumberOfAvailableDisabled(int lotId = 0);
 	std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableNormal(int lotId = 0);
 	std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableDisabled(int lotId = 0);
-	bool bookingExists(
-		int lotId,
-		std::string email,
-		std::string registration,
-		std::chrono::system_clock::time_point start,
-		std::chrono::system_clock::time_point end);
-
 	void removeExpiredBookings();
 	void removeExpiredTickets();
+	std::unordered_map<int, int> getParkedWithoutTicketByLot();
 };
 

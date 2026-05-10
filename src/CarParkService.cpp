@@ -14,6 +14,18 @@ CarParkService::~CarParkService()
 	stopAvailabilityUpdater();
 }
 
+void CarParkService::setLastBookingFailureMessage(const std::string& message)
+{
+	std::lock_guard<std::mutex> lock(m_bookingMessageMutex);
+	m_lastBookingFailureMessage = message;
+}
+
+std::string CarParkService::getLastBookingFailureMessage() const
+{
+	std::lock_guard<std::mutex> lock(m_bookingMessageMutex);
+	return m_lastBookingFailureMessage;
+}
+
 void CarParkService::loadCarPark()
 {
 	m_carPark = m_database.loadCarPark();
@@ -145,19 +157,63 @@ bool CarParkService::createBooking(
 	std::chrono::system_clock::time_point end,
 	int lotId)
 {
-	if (!m_carPark) return false;
-	if (registration.empty()) return false;
-	if (start >= end) return false;
-	if (lotId <= 0) return false;
-	if (!m_database.accountExists(email)) return false;
-	if (m_carPark->findAvailableReservedSpace(start, end, lotId) == -1) return false;
+	setLastBookingFailureMessage("");
 
-	if (!m_database.insertBooking(lotId, email, registration, start, end))
+	if (!m_carPark)
 	{
+		setLastBookingFailureMessage("Car park is not loaded.");
 		return false;
 	}
 
-	return m_carPark->createBooking(lotId, email, std::move(registration), start, end);
+	if (registration.empty())
+	{
+		setLastBookingFailureMessage("Registration is required.");
+		return false;
+	}
+
+	if (start >= end)
+	{
+		setLastBookingFailureMessage("Booking end time must be after the start time.");
+		return false;
+	}
+
+	if ((end - start) > std::chrono::hours(8))
+	{
+		setLastBookingFailureMessage("Bookings cannot exceed 8 hours.");
+		return false;
+	}
+
+	if (lotId <= 0)
+	{
+		setLastBookingFailureMessage("A valid lot must be selected.");
+		return false;
+	}
+
+	if (!m_database.accountExists(email))
+	{
+		setLastBookingFailureMessage("Account does not exist.");
+		return false;
+	}
+
+	if (m_carPark->findAvailableReservedSpace(start, end, lotId) == -1)
+	{
+		setLastBookingFailureMessage("No reserved spaces are available for that time range.");
+		return false;
+	}
+
+	if (!m_database.insertBooking(email, registration, start, end, lotId))
+	{
+		setLastBookingFailureMessage("Booking could not be created. You may already have an overlapping booking or 5 active bookings.");
+		return false;
+	}
+
+	if (!m_carPark->createBooking(email, std::move(registration), start, end, lotId))
+	{
+		setLastBookingFailureMessage("Booking was saved but could not be added to live memory.");
+		return false;
+	}
+
+	return true;
 }
 
 std::vector<TempBooking> CarParkService::getUpcomingBookings(const std::string& email)
@@ -166,23 +222,23 @@ std::vector<TempBooking> CarParkService::getUpcomingBookings(const std::string& 
 }
 
 bool CarParkService::cancelBooking(
-	int lotId,
 	const std::string& email,
 	std::string registration,
 	std::chrono::system_clock::time_point start,
-	std::chrono::system_clock::time_point end)
+	std::chrono::system_clock::time_point end,
+	int lotId)
 {
 	if (!m_carPark) return false;
 	if (lotId <= 0) return false;
 	if (registration.empty()) return false;
 	if (start >= end) return false;
 
-	if (!m_database.cancelBookingRecord(lotId, email, registration, start, end))
+	if (!m_database.cancelBookingRecord(email, registration, start, end, lotId))
 	{
 		return false;
 	}
 
-	if (!m_carPark->cancelBooking(lotId, email, std::move(registration), start, end))
+	if (!m_carPark->cancelBooking(email, std::move(registration), start, end, lotId))
 	{
 		std::cout << "Cancel booking warning: database updated but in-memory booking was not found." << std::endl;
 	}
@@ -192,26 +248,53 @@ bool CarParkService::cancelBooking(
 
 bool CarParkService::updateBooking(
 	const std::string& email,
-	int originalLotId,
 	std::string originalRegistration,
 	std::chrono::system_clock::time_point originalStart,
 	std::chrono::system_clock::time_point originalEnd,
-	int newLotId,
+	int originalLotId,
 	std::string newRegistration,
 	std::chrono::system_clock::time_point newStart,
-	std::chrono::system_clock::time_point newEnd)
+	std::chrono::system_clock::time_point newEnd,
+	int newLotId)
 {
-	if (!m_carPark) return false;
-	if (originalLotId <= 0 || newLotId <= 0) return false;
-	if (originalRegistration.empty() || newRegistration.empty()) return false;
-	if (originalStart >= originalEnd || newStart >= newEnd) return false;
+	setLastBookingFailureMessage("");
+
+	if (!m_carPark)
+	{
+		setLastBookingFailureMessage("Car park is not loaded.");
+		return false;
+	}
+
+	if (originalLotId <= 0 || newLotId <= 0)
+	{
+		setLastBookingFailureMessage("A valid lot must be selected.");
+		return false;
+	}
+
+	if (originalRegistration.empty() || newRegistration.empty())
+	{
+		setLastBookingFailureMessage("Registration is required.");
+		return false;
+	}
+
+	if (originalStart >= originalEnd || newStart >= newEnd)
+	{
+		setLastBookingFailureMessage("Booking end time must be after the start time.");
+		return false;
+	}
+
+	if ((newEnd - newStart) > std::chrono::hours(6))
+	{
+		setLastBookingFailureMessage("Bookings cannot exceed 6 hours.");
+		return false;
+	}
 
 	const bool removedFromMemory = m_carPark->cancelBooking(
-		originalLotId,
 		email,
 		originalRegistration,
 		originalStart,
-		originalEnd);
+		originalEnd,
+		originalLotId);
 
 	if (!removedFromMemory)
 	{
@@ -223,41 +306,47 @@ bool CarParkService::updateBooking(
 		if (removedFromMemory)
 		{
 			m_carPark->createBooking(
-				originalLotId,
 				email,
 				originalRegistration,
 				originalStart,
-				originalEnd);
+				originalEnd,
+				originalLotId);
 		}
+
+		setLastBookingFailureMessage("No reserved spaces are available for that new time range.");
 		return false;
 	}
 
 	if (!m_database.updateBookingRecord(
 		email,
-		originalLotId,
 		originalRegistration,
 		originalStart,
 		originalEnd,
-		newLotId,
+		originalLotId,
 		newRegistration,
 		newStart,
-		newEnd))
+		newEnd,
+		newLotId))
 	{
 		if (removedFromMemory)
 		{
 			m_carPark->createBooking(
-				originalLotId,
 				email,
 				originalRegistration,
 				originalStart,
-				originalEnd);
+				originalEnd,
+				originalLotId);
 		}
+
+		setLastBookingFailureMessage("Booking could not be updated. You may already have an overlapping booking or 5 active bookings.");
 		return false;
 	}
 
-	if (!m_carPark->createBooking(newLotId, email, std::move(newRegistration), newStart, newEnd))
+	if (!m_carPark->createBooking(email, std::move(newRegistration), newStart, newEnd, newLotId))
 	{
 		std::cout << "Update booking warning: database updated but in-memory booking could not be inserted." << std::endl;
+		setLastBookingFailureMessage("Booking was updated but could not be added to live memory.");
+		return false;
 	}
 
 	return true;
@@ -293,4 +382,24 @@ std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> CarPa
 void CarParkService::stop()
 {
 	stopAvailabilityUpdater();
+}
+
+bool CarParkService::isAdminAccount(const std::string& email)
+{
+	return m_database.isAdminAccount(email);
+}
+
+std::unordered_map<int, int> CarParkService::getParkedWithoutTicketCounts()
+{
+	return m_carPark ? m_carPark->getParkedWithoutTicketByLot() : std::unordered_map<int, int>{};
+}
+
+std::vector<TempBooking> CarParkService::getCurrentBookingsForLot(int lotId)
+{
+	return m_database.getCurrentBookingsForLot(lotId);
+}
+
+int CarParkService::getReservedCapacity(int lotId) const
+{
+	return m_carPark ? m_carPark->getReservedCapacity(lotId) : 0;
 }

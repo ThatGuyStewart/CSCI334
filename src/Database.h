@@ -49,12 +49,36 @@ public:
 	bool createAccount(const std::string& email, const std::string& password);
 	bool validateAccount(const std::string& email, const std::string& password);
 	bool accountExists(const std::string& email);
-	bool insertBooking(int lotId, const std::string& email, const std::string& registration, std::chrono::system_clock::time_point start, std::chrono::system_clock::time_point end);
-	bool cancelBookingRecord(int lotId, const std::string& email, const std::string& registration, std::chrono::system_clock::time_point start, std::chrono::system_clock::time_point end);
-	bool updateBookingRecord(const std::string& email, int originalLotId, const std::string& originalRegistration, std::chrono::system_clock::time_point originalStart, std::chrono::system_clock::time_point originalEnd, int newLotId, const std::string& newRegistration, std::chrono::system_clock::time_point newStart, std::chrono::system_clock::time_point newEnd);
+	bool insertBooking(
+		const std::string& email,
+		const std::string& registration,
+		std::chrono::system_clock::time_point start,
+		std::chrono::system_clock::time_point end,
+		int lotId);
+
+	bool cancelBookingRecord(
+		const std::string& email,
+		const std::string& registration,
+		std::chrono::system_clock::time_point start,
+		std::chrono::system_clock::time_point end,
+		int lotId);
+
+	bool updateBookingRecord(
+		const std::string& email,
+		const std::string& originalRegistration,
+		std::chrono::system_clock::time_point originalStart,
+		std::chrono::system_clock::time_point originalEnd,
+		int originalLotId,
+		const std::string& newRegistration,
+		std::chrono::system_clock::time_point newStart,
+		std::chrono::system_clock::time_point newEnd,
+		int newLotId);
+
 	std::vector<TempBooking> getUpcomingBookings(const std::string& email);
 	std::vector<std::pair<int, int>> predictAvailableNormal(std::time_t futureTime, int lotId = 0);
 	std::vector<std::pair<int, int>> predictAvailableDisabled(std::time_t futureTime, int lotId = 0);
 	std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> getLotActivity();
 	bool saveAvailabilitySnapshot(std::time_t snapshotTime, const std::unordered_map<int, std::vector<int>>& availabilityByLot);
+	bool isAdminAccount(const std::string& email);
+	std::vector<TempBooking> getCurrentBookingsForLot(int lotId);
 };

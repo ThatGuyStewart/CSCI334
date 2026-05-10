@@ -13,11 +13,6 @@ namespace
 	};
 }
 
-TicketMachine& Lot::getTicketMachine()
-{
-	return *m_ticketMachine;
-}
-
 Space& Lot::getSpace(int spaceId)
 {
 	{
