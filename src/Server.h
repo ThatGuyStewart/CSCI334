@@ -58,6 +58,15 @@ private:
 	void cleanupOnClose(httplib::ws::WebSocket& ws);
 	void sendAvailabilityUpdate(httplib::ws::WebSocket& ws);
 	void broadcastAvailabilityUpdate();
+	void sendBookingsUpdate(httplib::ws::WebSocket& ws, const std::string& email);
+	void broadcastUserBookingsUpdate(const std::string& email);
+	std::string getCookieValue(const httplib::Request& req, const std::string& cookieName);
+	bool tryGetAdminEmail(const httplib::Request& req, std::string& email);
+	void handleApiAdminLogin(const httplib::Request& req, httplib::Response& res);
+	void handleApiAdminUser(const httplib::Request& req, httplib::Response& res);
+	void handleApiAdminLotActivity(const httplib::Request& req, httplib::Response& res);
+	void handleApiAdminParkedWithoutTicket(const httplib::Request& req, httplib::Response& res);
+	void handleApiAdminCurrentBookings(const httplib::Request& req, httplib::Response& res);
 
 public:
 	Server(CarParkService& service, const char* cert = "./cert/cert.crt", const char* key = "./cert/cert.key", std::string address = "127.0.0.1", int port = 8080);

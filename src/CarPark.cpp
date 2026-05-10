@@ -63,6 +63,19 @@ void CarPark::removeExpiredTickets()
 	}
 }
 
+std::unordered_map<int, int> CarPark::getParkedWithoutTicketByLot()
+{
+	std::unordered_map<int, int> counts;
+
+	for (const auto& [lotId, lot] : m_lots)
+	{
+		if (!lot) continue;
+		counts[lotId] = lot->getParkedWithoutTicket();
+	}
+
+	return counts;
+}
+
 // If lotId is specified, only check that lot for availability. Otherwise check all lots and return a list of those with availability.
 // Returns a vector of lot IDs that have availability for the given time range. Returns an empty vector if no lots have availability.
 std::vector<int> CarPark::findAvailableReservedLots(
@@ -99,11 +112,11 @@ int CarPark::findAvailableReservedSpace(
 }
 
 bool CarPark::createBooking(
-	int lotId,
 	std::string email,
 	std::string registration,
 	std::chrono::system_clock::time_point start,
-	std::chrono::system_clock::time_point end)
+	std::chrono::system_clock::time_point end,
+	int lotId)
 {
 	if (lotId <= 0) return false;
 
@@ -114,11 +127,11 @@ bool CarPark::createBooking(
 }
 
 bool CarPark::cancelBooking(
-	int lotId,
 	std::string email,
 	std::string registration,
 	std::chrono::system_clock::time_point start,
-	std::chrono::system_clock::time_point end)
+	std::chrono::system_clock::time_point end,
+	int lotId)
 {
 	if (lotId <= 0) return false;
 
@@ -239,11 +252,12 @@ std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> CarPark::getAvail
 }
 
 bool CarPark::bookingExists(
-	int lotId,
+	
 	std::string email,
 	std::string registration,
 	std::chrono::system_clock::time_point start,
-	std::chrono::system_clock::time_point end)
+	std::chrono::system_clock::time_point end,
+	int lotId)
 {
 	if (lotId > 0)
 	{
@@ -256,10 +270,7 @@ bool CarPark::bookingExists(
 	}
 	for (const auto& [id, lot] : m_lots)
 	{
-		if (lot && lot->bookingExists(email, registration, start, end))
-		{
-			return true;
-		}
+		if (lot && lot->bookingExists(email, registration, start, end)) return true;
 	}
 	return false;
 }

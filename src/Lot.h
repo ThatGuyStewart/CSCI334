@@ -20,13 +20,8 @@ private:
 	std::unordered_map<int, std::unique_ptr<ReservedSpace>> m_reservedSpaces;
 	std::unordered_multimap<std::string, std::unique_ptr<Booking>> m_bookings;
 	std::unique_ptr<TicketMachine> m_ticketMachine;
-
-	TicketMachine& getTicketMachine();
 	Space& getSpace(int spaceId);
-
-	bool canCreateBooking(
-		std::chrono::system_clock::time_point start,
-		std::chrono::system_clock::time_point end) const;
+	bool canCreateBooking(std::chrono::system_clock::time_point start, std::chrono::system_clock::time_point end) const;
 
 public:
 	Lot(

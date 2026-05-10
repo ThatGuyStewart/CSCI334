@@ -80,7 +80,6 @@ std::vector<std::pair<int, int>> Database::predictAvailableNormal(std::time_t fu
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
 	if (!isConnected()) return {};
-	if (futureTime < std::chrono::system_clock::to_time_t(std::chrono::system_clock::now())) return {};
 
 	try
 	{
@@ -159,7 +158,6 @@ std::vector<std::pair<int, int>> Database::predictAvailableDisabled(std::time_t 
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
 	if (!isConnected()) return {};
-	if (futureTime < std::chrono::system_clock::to_time_t(std::chrono::system_clock::now())) return {};
 
 	try
 	{
@@ -561,17 +559,18 @@ bool Database::accountExists(const std::string& email)
 }
 
 bool Database::insertBooking(
-	int lotId,
 	const std::string& email,
 	const std::string& registration,
 	std::chrono::system_clock::time_point start,
-	std::chrono::system_clock::time_point end)
+	std::chrono::system_clock::time_point end,
+	int lotId)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
 
 	if (!isConnected()) return false;
 	if (registration.empty()) return false;
 	if (start >= end) return false;
+	if ((end - start) > std::chrono::hours(6)) return false;
 	if (lotId <= 0) return false;
 	if (!accountExists(email)) return false;
 
@@ -580,6 +579,35 @@ bool Database::insertBooking(
 		refreshBookingStatuses();
 
 		pqxx::work tx(*m_connection);
+
+		const pqxx::result activeCountResult = tx.exec_params(
+			"SELECT COUNT(*) AS active_count "
+			"FROM bookings "
+			"WHERE email = $1 AND status = 'Active'",
+			email);
+
+		if (!activeCountResult.empty() && activeCountResult[0]["active_count"].as<int>() >= 5)
+		{
+			return false;
+		}
+
+		const pqxx::result overlapResult = tx.exec_params(
+			"SELECT 1 "
+			"FROM bookings "
+			"WHERE email = $1 "
+			"  AND status = 'Active' "
+			"  AND start_time < to_timestamp($2) "
+			"  AND end_time > to_timestamp($3) "
+			"LIMIT 1",
+			email,
+			toEpochSeconds(end),
+			toEpochSeconds(start));
+
+		if (!overlapResult.empty())
+		{
+			return false;
+		}
+
 		tx.exec_params(
 			"INSERT INTO bookings (lot_id, email, registration, start_time, end_time, status) "
 			"VALUES ($1, $2, $3, to_timestamp($4), to_timestamp($5), 'Active')",
@@ -588,8 +616,8 @@ bool Database::insertBooking(
 			registration,
 			toEpochSeconds(start),
 			toEpochSeconds(end));
-		tx.commit();
 
+		tx.commit();
 		return true;
 	}
 	catch (const std::exception& e)
@@ -600,11 +628,11 @@ bool Database::insertBooking(
 }
 
 bool Database::cancelBookingRecord(
-	int lotId,
 	const std::string& email,
 	const std::string& registration,
 	std::chrono::system_clock::time_point start,
-	std::chrono::system_clock::time_point end)
+	std::chrono::system_clock::time_point end,
+	int lotId)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
 
@@ -651,14 +679,14 @@ bool Database::cancelBookingRecord(
 
 bool Database::updateBookingRecord(
 	const std::string& email,
-	int originalLotId,
 	const std::string& originalRegistration,
 	std::chrono::system_clock::time_point originalStart,
 	std::chrono::system_clock::time_point originalEnd,
-	int newLotId,
+	int originalLotId,
 	const std::string& newRegistration,
 	std::chrono::system_clock::time_point newStart,
-	std::chrono::system_clock::time_point newEnd)
+	std::chrono::system_clock::time_point newEnd,
+	int newLotId)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
 
@@ -666,6 +694,7 @@ bool Database::updateBookingRecord(
 	if (originalLotId <= 0 || newLotId <= 0) return false;
 	if (originalRegistration.empty() || newRegistration.empty()) return false;
 	if (originalStart >= originalEnd || newStart >= newEnd) return false;
+	if ((newEnd - newStart) > std::chrono::hours(6)) return false;
 
 	try
 	{
@@ -694,6 +723,36 @@ bool Database::updateBookingRecord(
 			return false;
 		}
 
+		const pqxx::result activeCountResult = tx.exec_params(
+			"SELECT COUNT(*) AS active_count "
+			"FROM bookings "
+			"WHERE email = $1 AND status = 'Active'",
+			email);
+
+		if (!activeCountResult.empty() && activeCountResult[0]["active_count"].as<int>() >= 5)
+		{
+			tx.abort();
+			return false;
+		}
+
+		const pqxx::result overlapResult = tx.exec_params(
+			"SELECT 1 "
+			"FROM bookings "
+			"WHERE email = $1 "
+			"  AND status = 'Active' "
+			"  AND start_time < to_timestamp($2) "
+			"  AND end_time > to_timestamp($3) "
+			"LIMIT 1",
+			email,
+			toEpochSeconds(newEnd),
+			toEpochSeconds(newStart));
+
+		if (!overlapResult.empty())
+		{
+			tx.abort();
+			return false;
+		}
+
 		tx.exec_params(
 			"INSERT INTO bookings (lot_id, email, registration, start_time, end_time, status) "
 			"VALUES ($1, $2, $3, to_timestamp($4), to_timestamp($5), 'Active')",
@@ -716,7 +775,7 @@ bool Database::updateBookingRecord(
 bool Database::createSchema()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
-
+	std::cout << "Creating database schema..." << std::endl;
 	try
 	{
 		pqxx::work tx(*m_connection);
@@ -755,12 +814,20 @@ bool Database::createSchema()
 				start_time TIMESTAMPTZ NOT NULL,
 				end_time TIMESTAMPTZ NOT NULL,
 				status TEXT NOT NULL DEFAULT 'Active',
+				created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 				FOREIGN KEY (email) REFERENCES accounts(email) ON DELETE CASCADE,
 				FOREIGN KEY (lot_id) REFERENCES lots(lot_id) ON DELETE CASCADE
 			);
 
 			ALTER TABLE bookings
 			ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Active';
+
+			ALTER TABLE bookings
+			ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+			ALTER TABLE bookings
+			ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 			ALTER TABLE bookings
 			DROP CONSTRAINT IF EXISTS bookings_lot_id_space_id_fkey;
@@ -776,24 +843,60 @@ bool Database::createSchema()
 			ALTER COLUMN end_time TYPE TIMESTAMPTZ
 			USING end_time AT TIME ZONE current_setting('TIMEZONE');
 
+			ALTER TABLE bookings
+			DROP CONSTRAINT IF EXISTS chk_bookings_status;
+
+			ALTER TABLE bookings
+			ADD CONSTRAINT chk_bookings_status
+			CHECK (status IN ('Active', 'Cancelled', 'Expired'));
+
+			ALTER TABLE bookings
+			DROP CONSTRAINT IF EXISTS chk_bookings_time_range;
+
+			ALTER TABLE bookings
+			ADD CONSTRAINT chk_bookings_time_range
+			CHECK (end_time > start_time);
+
 			UPDATE bookings
-			SET status = 'Expired'
+			SET status = 'Expired',
+				updated_at = NOW()
 			WHERE status = 'Active' AND end_time <= NOW();
+
+			CREATE INDEX IF NOT EXISTS idx_bookings_lot_status_start_end
+			ON bookings(lot_id, status, start_time, end_time);
+
+			ALTER TABLE bookings
+			DROP CONSTRAINT IF EXISTS chk_bookings_max_duration;
+
+			ALTER TABLE bookings
+			ADD CONSTRAINT chk_bookings_max_duration
+			CHECK (end_time <= start_time + INTERVAL '6 hours');
 
 			CREATE TABLE IF NOT EXISTS availability
 			(
 				lot_id INT NOT NULL,
-				snapshot_time TIMESTAMP NOT NULL,
+				snapshot_time TIMESTAMPTZ NOT NULL,
 				available_normal_spaces INT NOT NULL,
 				available_disabled_spaces INT NOT NULL,
 				reserved_occupied_spaces INT NOT NULL DEFAULT 0,
-				updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 				PRIMARY KEY (lot_id, snapshot_time),
 				FOREIGN KEY (lot_id) REFERENCES lots(lot_id) ON DELETE CASCADE
 			);
+			
+			ALTER TABLE availability
+			ALTER COLUMN updated_at TYPE TIMESTAMPTZ
+			USING updated_at AT TIME ZONE current_setting('TIMEZONE');
+
+			ALTER TABLE availability
+			ALTER COLUMN snapshot_time TYPE TIMESTAMPTZ
+			USING snapshot_time AT TIME ZONE current_setting('TIMEZONE');
 
 			ALTER TABLE availability
 			ADD COLUMN IF NOT EXISTS reserved_occupied_spaces INT NOT NULL DEFAULT 0;
+
+			CREATE INDEX IF NOT EXISTS idx_availability_snapshot_time
+			ON availability(snapshot_time);
 		)");
 
 		tx.commit();
@@ -854,6 +957,8 @@ std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> Datab
 			"    a.reserved_occupied_spaces "
 			"FROM availability a "
 			"INNER JOIN capacities c ON c.lot_id = a.lot_id "
+			"WHERE EXTRACT(SECOND FROM a.snapshot_time) = 0 "
+			"  AND (EXTRACT(MINUTE FROM a.snapshot_time)::int % 15) = 0 "
 			"ORDER BY a.lot_id, a.snapshot_time");
 
 		for (const auto& row : result)
@@ -947,5 +1052,60 @@ bool Database::saveAvailabilitySnapshot(
 	{
 		std::cout << "Save availability snapshot failed: " << e.what() << std::endl;
 		return false;
+	}
+}
+
+bool Database::isAdminAccount(const std::string& email)
+{
+	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
+
+	const auto it = m_accounts.find(email);
+	return it != m_accounts.end() && it->second != nullptr && it->second->isAdmin();
+}
+
+std::vector<TempBooking> Database::getCurrentBookingsForLot(int lotId)
+{
+	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
+
+	std::vector<TempBooking> bookings;
+	if (!isConnected()) return bookings;
+	if (lotId <= 0) return bookings;
+
+	try
+	{
+		refreshBookingStatuses();
+
+		pqxx::read_transaction tx(*m_connection);
+		pqxx::result result = tx.exec_params(
+			"SELECT lot_id, email, registration, "
+			"EXTRACT(EPOCH FROM start_time) AS start_epoch, "
+			"EXTRACT(EPOCH FROM end_time) AS end_epoch "
+			"FROM bookings "
+			"WHERE lot_id = $1 "
+			"  AND status = 'Active' "
+			"  AND start_time <= NOW() "
+			"  AND end_time > NOW() "
+			"ORDER BY start_time, email, registration",
+			lotId);
+
+		bookings.reserve(result.size());
+		for (const auto& row : result)
+		{
+			bookings.push_back(
+				{
+					row["lot_id"].as<int>(),
+					row["email"].as<std::string>(),
+					row["registration"].as<std::string>(),
+					fromEpochSeconds(row["start_epoch"].as<double>()),
+					fromEpochSeconds(row["end_epoch"].as<double>())
+				});
+		}
+
+		return bookings;
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << "Get current bookings for lot failed: " << e.what() << std::endl;
+		return {};
 	}
 }
