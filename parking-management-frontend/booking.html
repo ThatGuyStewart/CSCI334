@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UOW Parking — Book Parking</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============================================================
+     BOOKING PAGE  (booking.html)
+     Shows: booking details form, available areas, campus map,
+            selected booking summary, registration input,
+            booking confirmation screen on success
+     ============================================================ -->
+
+<div class="app">
+
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <div class="main">
+
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-brand">UOW Smart Parking Management System</div>
+        <div class="topbar-title">Book Parking</div>
+      </div>
+      <div class="topbar-right">
+        <div class="user-pill">
+          <div class="avatar avatar-sm">JH</div>
+          <span>Jubair</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+
+      <!-- ── Booking Confirmation (hidden until successful submission) ── -->
+      <div id="book-success" class="hidden">
+        <div class="success-wrap">
+          <div class="success-icon">✅</div>
+          <div class="success-title">Booking Confirmed</div>
+          <div class="success-sub">
+            Your parking reservation has been created.<br>
+            Park in the reserved section of your selected area.
+          </div>
+          <div class="success-detail" id="book-success-detail">
+            <!-- Populated by booking.js -->
+          </div>
+          <div style="display:flex; gap:8px; justify-content:center;">
+            <button class="btn btn-secondary" onclick="location.href='manage-bookings.html'">
+              Manage Bookings
+            </button>
+            <button class="btn btn-primary" id="book-another-btn">
+              Book Another
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Booking Form ── -->
+      <div id="book-form">
+        <div class="row">
+
+          <!-- ── Left column ── -->
+          <div class="col-2">
+
+            <!-- Booking Details -->
+            <div class="card">
+              <div class="card-title">Booking Details</div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Date</label>
+                  <input type="date" class="form-input" id="bk-date">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Time Slot</label>
+                  <select class="form-select" id="bk-time">
+                    <option value="">[Select Time]</option>
+                    <!-- Populated by booking.js -->
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Filter by Area</label>
+                  <select class="form-select" id="bk-filter">
+                    <option value="">[All Areas]</option>
+                    <!-- Populated by booking.js -->
+                  </select>
+                </div>
+              </div>
+              <div style="font-size:11px; color:var(--text-3); margin-top:8px;">
+                Time slot-based booking
+              </div>
+            </div>
+
+            <!-- Available Booking Areas -->
+            <div class="card">
+              <div class="card-title">Available Booking Areas</div>
+              <table class="tbl" id="bk-areas-tbl">
+                <tbody>
+                  <!-- Populated by booking.js -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Campus Map -->
+            <div class="card mb-0">
+              <div class="card-title">Campus Parking Overview</div>
+              <div class="img-campus" style="height:130px;">
+                <img
+                  src="https://images.unsplash.com/photo-1506521781263-d8422e82f27a?w=900&q=80"
+                  alt="UOW campus aerial"
+                >
+                <div class="img-campus-overlay">UOW Campus — Booking Areas</div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- ── Right column ── -->
+          <div class="col">
+
+            <!-- Selected Booking Summary -->
+            <div class="card">
+              <div class="card-title">Selected Booking</div>
+              <div class="detail-row">
+                <span class="detail-key">Parking Area</span>
+                <span class="detail-val" id="sel-area">[No area selected]</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-key">Date</span>
+                <span class="detail-val" id="sel-date">[Not selected]</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-key">Time Slot</span>
+                <span class="detail-val" id="sel-time">[Not selected]</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-key">Booking Type</span>
+                <span class="detail-val">Reserved Section</span>
+              </div>
+            </div>
+
+            <!-- Vehicle Registration + Submit -->
+            <div class="card">
+              <div class="card-title">Vehicle Registration</div>
+              <div class="form-group">
+                <label class="form-label">Registration Number</label>
+                <input type="text" class="form-input mono" id="bk-reg"
+                  placeholder="e.g. ABC 123">
+              </div>
+              <button class="btn btn-primary btn-block mb-8" id="confirm-booking-btn">
+                Confirm Booking
+              </button>
+              <button class="btn btn-secondary btn-block"
+                onclick="location.href='availability.html'">
+                Back to Availability
+              </button>
+            </div>
+
+            <!-- Info box -->
+            <div class="card mb-0" style="font-size:12px; color:var(--text-2); line-height:1.9;">
+              <div class="card-title">Important Information</div>
+              • Park in the reserved section of your selected area<br>
+              • Booking is for the selected time slot only<br>
+              • If no capacity is available, choose another time or area<br>
+              • Payment via physical ticket machines on campus
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <!-- /book-form -->
+
+    </div>
+    <!-- /content -->
+
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/main.js"></script>
+<script src="js/booking.js"></script>
+
+</body>
+</html>

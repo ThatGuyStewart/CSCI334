@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UOW Parking — Dashboard</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============================================================
+     DASHBOARD PAGE  (dashboard.html)
+     Shows: live availability, campus map, area list,
+            active booking, predicted availability form,
+            prices, quick actions
+     ============================================================ -->
+
+<div class="app">
+
+  <!-- Sidebar injected by main.js -->
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <div class="main">
+
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-brand">UOW Smart Parking Management System</div>
+        <div class="topbar-title">Parking Dashboard</div>
+      </div>
+      <div class="topbar-right">
+        <div class="live-badge">
+          <div class="live-dot"></div>
+          Live · <span id="dash-clock" style="font-family:var(--mono);">—</span>
+        </div>
+        <div class="user-pill">
+          <div class="avatar avatar-sm" id="tp-avatar">JH</div>
+          <span>Jubair</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+      <div class="row">
+
+        <!-- ── Left / Main column ── -->
+        <div class="col-3">
+
+          <!-- Current Availability -->
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <div class="card-title mb-0">Current Availability</div>
+              <div class="update-note" style="margin:0;">Updated every 5s</div>
+            </div>
+            <div class="avail-big" id="dash-free">247</div>
+            <div class="avail-label">Free Spaces Available</div>
+            <div class="avail-meta">
+              Total Spaces: 450 &nbsp;|&nbsp; Occupancy: <span id="dash-occ">45%</span>
+            </div>
+          </div>
+
+          <!-- Campus Parking Overview -->
+          <div class="card">
+            <div class="card-title">Campus Parking Overview</div>
+            <div class="row" style="gap:12px; margin:0;">
+              <div class="col-2">
+                <div class="img-campus" style="height:175px;">
+                  <img
+                    src="https://images.unsplash.com/photo-1506521781263-d8422e82f27a?w=900&q=80"
+                    alt="UOW campus aerial view"
+                  >
+                  <div class="img-campus-overlay">UOW Campus — Parking Overview</div>
+                </div>
+              </div>
+              <div class="col">
+                <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-3); margin-bottom:8px;">
+                  Parking Areas
+                </div>
+                <div class="area-list" id="dash-area-list">
+                  <!-- Populated by dashboard.js -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom row: Predicted / Prices / Quick Actions -->
+          <div class="row mb-0">
+
+            <!-- Predicted Availability -->
+            <div class="col">
+              <div class="card mb-0">
+                <div class="card-title">Check Predicted Availability</div>
+                <div class="form-group">
+                  <label class="form-label">Date</label>
+                  <input type="date" class="form-input" id="dash-date">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Time</label>
+                  <input type="time" class="form-input" id="dash-time">
+                </div>
+                <div class="form-check">
+                  <input type="checkbox" id="dash-disabled">
+                  <label for="dash-disabled">Require Disabled Parking</label>
+                </div>
+                <button class="btn btn-secondary btn-block" style="margin-top:6px;"
+                  onclick="location.href='availability.html'">
+                  Check Predicted Availability
+                </button>
+              </div>
+            </div>
+
+            <!-- Prices -->
+            <div class="col">
+              <div class="card mb-8">
+                <div class="card-title">Parking Prices</div>
+                <div id="dash-prices">
+                  <!-- Populated by dashboard.js -->
+                </div>
+                <div class="price-note">* Payment via ticket machines only</div>
+              </div>
+
+              <!-- Quick Actions -->
+              <div class="card mb-0">
+                <div class="card-title">Quick Actions</div>
+                <button class="btn btn-primary btn-block mb-8"
+                  onclick="location.href='booking.html'">Book Parking</button>
+                <button class="btn btn-secondary btn-block"
+                  onclick="location.href='manage-bookings.html'">Manage Bookings</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ── Right column ── -->
+        <div class="col">
+
+          <!-- Active Booking -->
+          <div class="active-booking-card" id="dash-active-booking">
+            <!-- Populated by dashboard.js -->
+          </div>
+
+          <!-- UOW campus photo -->
+          <div class="img-campus" style="height:200px; margin-top:0;">
+            <img
+              src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Uni_of_Wollongong_Science_buildings.JPG/1280px-Uni_of_Wollongong_Science_buildings.JPG"
+              alt="University of Wollongong science buildings"
+              onerror="this.src='https://images.unsplash.com/photo-1498243691581-b145c3f54a5a?w=900&q=80'"
+            >
+            <div class="img-campus-overlay">UOW Main Campus — Science Buildings</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    <!-- /content -->
+
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/main.js"></script>
+<script src="js/dashboard.js"></script>
+
+</body>
+</html>

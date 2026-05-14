@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UOW Parking — Login</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ── LOGIN PANEL ── -->
+<div id="panel-login" class="login-wrap">
+
+  <div class="login-left">
+    <div class="login-left-brand">University of Wollongong</div>
+    <div class="login-left-title">UOW Smart Parking Management System</div>
+    <div class="login-left-sub">
+      Check real-time parking availability, view predicted availability,
+      create bookings, and manage existing reservations.
+    </div>
+
+    <!-- UOW campus hero image -->
+    <div class="login-hero-img">
+      <img
+        src="https://images.unsplash.com/photo-1562774053-701939374585?w=1400&q=85"
+        alt="University campus aerial view"
+      >
+      <div class="login-hero-img-overlay">
+        <p>University of Wollongong &nbsp;·&nbsp; Wollongong, NSW, Australia</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-right">
+    <div class="login-form-title">Login / Create Account</div>
+    <div class="login-form-sub">
+      Log in or create an account to access parking availability and booking features.
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Email Address</label>
+      <input type="email" class="form-input" id="l-email" placeholder="Enter your email">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Password</label>
+      <input type="password" class="form-input" id="l-pass" placeholder="Enter your password">
+    </div>
+
+    <span class="forgot-link" id="forgot-link">Forgot password?</span>
+
+    <button class="btn btn-primary btn-block mb-8" id="login-btn">Log In</button>
+
+    <div class="login-divider">New to the system?</div>
+
+    <button class="btn btn-secondary btn-block" id="show-register-btn">Create Account</button>
+
+    <div class="login-info">
+      <strong>Students and staff:</strong> Log in with university credentials.<br>
+      <strong>Visitors/public users:</strong> Create an account to access parking services.
+    </div>
+    <div class="login-footer">An account is required to create and manage bookings.</div>
+  </div>
+
+</div>
+
+<!-- ── REGISTER PANEL ── -->
+<div id="panel-register" class="login-wrap hidden">
+
+  <div class="login-left">
+    <div class="login-left-brand">University of Wollongong</div>
+    <div class="login-left-title">UOW Smart Parking Management System</div>
+    <div class="login-left-sub">
+      Create an account to book parking spots, view predictions, and manage your reservations.
+    </div>
+
+    <!-- UOW campus hero image (different angle) -->
+    <div class="login-hero-img">
+      <img
+        src="https://images.unsplash.com/photo-1523050854058-8df90110c9f1?w=1400&q=85"
+        alt="University campus buildings"
+      >
+      <div class="login-hero-img-overlay">
+        <p>University of Wollongong &nbsp;·&nbsp; Wollongong, NSW, Australia</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-right">
+    <div class="login-form-title">Create Account</div>
+    <div class="login-form-sub">Fill in your details to register.</div>
+
+    <div class="form-group">
+      <label class="form-label">Full Name</label>
+      <input type="text" class="form-input" id="r-name" placeholder="Enter your full name">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Email Address</label>
+      <input type="email" class="form-input" id="r-email" placeholder="Enter your email">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Password</label>
+      <input type="password" class="form-input" id="r-pass" placeholder="Create a password">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Confirm Password</label>
+      <input type="password" class="form-input" id="r-confirm" placeholder="Confirm your password">
+    </div>
+
+    <button class="btn btn-primary btn-block mb-8" id="register-btn">Create Account</button>
+
+    <div class="login-divider">Already have an account?</div>
+
+    <button class="btn btn-secondary btn-block" id="show-login-btn">Back to Log In</button>
+  </div>
+
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/main.js"></script>
+<script>
+  document.getElementById('show-register-btn').addEventListener('click', () => {
+    document.getElementById('panel-login').classList.add('hidden');
+    document.getElementById('panel-register').classList.remove('hidden');
+  });
+
+  document.getElementById('show-login-btn').addEventListener('click', () => {
+    document.getElementById('panel-register').classList.add('hidden');
+    document.getElementById('panel-login').classList.remove('hidden');
+  });
+
+  document.getElementById('login-btn').addEventListener('click', () => {
+    const email = document.getElementById('l-email').value.trim();
+    const pass  = document.getElementById('l-pass').value;
+    if (!email || !pass) { showToast('Please enter email and password.', '⚠️'); return; }
+    location.href = 'dashboard.html';
+  });
+
+  document.getElementById('l-pass').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('login-btn').click();
+  });
+
+  document.getElementById('register-btn').addEventListener('click', () => {
+    const name    = document.getElementById('r-name').value.trim();
+    const email   = document.getElementById('r-email').value.trim();
+    const pass    = document.getElementById('r-pass').value;
+    const confirm = document.getElementById('r-confirm').value;
+    if (!name || !email || !pass) { showToast('Please fill in all fields.', '⚠️'); return; }
+    if (pass !== confirm)         { showToast('Passwords do not match.', '⚠️'); return; }
+    showToast('Account created! Redirecting…', '✅');
+    setTimeout(() => { location.href = 'dashboard.html'; }, 1200);
+  });
+
+  document.getElementById('forgot-link').addEventListener('click', () => {
+    showToast('Password reset email sent.', '✉️');
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UOW Parking — Availability</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============================================================
+     AVAILABILITY PAGE  (availability.html)
+     Shows: filter bar, campus map, predicted availability,
+            current count, area table, prices
+     ============================================================ -->
+
+<div class="app">
+
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <div class="main">
+
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-brand">UOW Smart Parking Management System</div>
+        <div class="topbar-title">Parking Availability</div>
+      </div>
+      <div class="topbar-right">
+        <div class="live-badge">
+          <div class="live-dot"></div>
+          Last updated: <span id="avail-clock" style="font-family:var(--mono);">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+
+      <!-- Filter Bar -->
+      <div class="filter-bar">
+        <div class="filter-group">
+          <div class="filter-label">Parking Area</div>
+          <select class="form-select" id="av-area">
+            <option value="all">All Areas</option>
+            <!-- Populated by availability.js -->
+          </select>
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">Date</div>
+          <input type="date" class="form-input" id="av-date">
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">Time</div>
+          <input type="time" class="form-input" id="av-time">
+        </div>
+        <div style="display:flex; align-items:center; gap:7px; padding-bottom:1px;">
+          <input type="checkbox" id="av-disabled"
+            style="width:14px; height:14px; accent-color:var(--blue);">
+          <label for="av-disabled"
+            style="font-size:12px; color:var(--text-2); cursor:pointer;">
+            Require Disabled Parking
+          </label>
+        </div>
+        <div style="padding-bottom:1px;">
+          <button class="btn btn-primary" id="check-avail-btn">Check Availability</button>
+        </div>
+      </div>
+
+      <div class="row">
+
+        <!-- ── Left: Map + Predicted ── -->
+        <div class="col-2">
+
+          <div class="card">
+            <div class="card-title">Campus Parking Map</div>
+            <div class="img-campus" style="height:195px;">
+              <img
+                src="https://images.unsplash.com/photo-1569447891824-5b4d7e0e8e03?w=1000&q=80"
+                alt="UOW campus aerial view"
+              >
+              <div class="img-campus-overlay">UOW Campus — Live Parking Map</div>
+            </div>
+          </div>
+
+          <div class="card mb-0">
+            <div class="card-title">Predicted Availability</div>
+            <div style="font-size:11px; color:var(--text-3); margin-bottom:10px;">
+              Select date and time above to view predictions
+            </div>
+            <div id="predicted-list">
+              <!-- Populated by availability.js -->
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ── Right: Stats + Areas + Prices ── -->
+        <div class="col">
+
+          <!-- Current Availability -->
+          <div class="card">
+            <div class="card-title">Current Availability</div>
+            <div class="avail-big" id="avail-count">142</div>
+            <div class="avail-label">Free Spaces</div>
+            <div class="avail-meta">Total: 580 &nbsp;|&nbsp; Occupancy: 76%</div>
+            <div class="update-note">Updated every 5 seconds</div>
+          </div>
+
+          <!-- Parking Areas -->
+          <div class="card">
+            <div class="card-title">Parking Areas</div>
+            <table class="tbl" id="avail-areas-table">
+              <tbody>
+                <!-- Populated by availability.js -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Parking Prices -->
+          <div class="card mb-0">
+            <div class="card-title">Parking Prices</div>
+            <div id="avail-prices">
+              <!-- Populated by availability.js -->
+            </div>
+            <div class="price-note">Payment via ticket machines only</div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+    <!-- /content -->
+
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/main.js"></script>
+<script src="js/availability.js"></script>
+
+</body>
+</html>
