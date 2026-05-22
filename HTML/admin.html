@@ -164,6 +164,46 @@
         .predicted {
             background: #b51e3e;
         }
+
+        .space-section {
+            margin-top: 1rem;
+        }
+
+        .space-grid {
+            display: grid;
+            grid-template-columns: repeat(10, 32px);
+            grid-auto-rows: 32px;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .space {
+            border-radius: 6px;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+            border: 2px solid transparent;
+            box-sizing: border-box;
+        }
+
+        .space.available {
+            background: #22c55e;
+            color: white;
+            }
+
+        .space.unavailable {
+            background: #ef4444;
+            color: white;
+        }
+
+        .space.disabled {
+            border-color: #1d4ed8;
+        }
     </style>
 </head>
 <body>
@@ -200,9 +240,9 @@
             <input id="graphCenterTime" type="datetime-local">
 
             <div>
-                <button id="range24hButton">Past 24 Hours</button>
-                <button id="rangeWeekButton">Past Week</button>
-                <button id="rangeMonthButton">Past Month</button>
+                <button id="range24hButton">Day</button>
+                <button id="rangeWeekButton">Week</button>
+                <button id="rangeMonthButton">Month</button>
             </div>
 
             <div class="legend">
@@ -212,12 +252,18 @@
 
             <div id="graphs" class="graph-grid"></div>
         </div>
-
         <div class="panel">
-            <h2>Current Bookings By Lot</h2>
+            <h2>Live Lot Views</h2>
+            <div id="liveLotGrid" class="graph-grid"></div>
+        </div>
+        <div class="panel">
+            <h2>Bookings By Lot</h2>
 
             <label for="lotSelector">Select Lot</label>
             <select id="lotSelector"></select>
+
+            <label for="bookingsTime">Booking Time</label>
+            <input id="bookingsTime" type="datetime-local">
 
             <div>
                 <button id="showBookingsButton">Show Bookings</button>
