@@ -403,6 +403,21 @@ void Server::handleApiAdminLotActivity(const httplib::Request& req, httplib::Res
 	}
 
 	const auto activity = m_service.getLotActivity();
+	const std::time_t serverNow = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+
+	auto findPredictedAvailableForLot =
+		[](const std::vector<std::pair<int, int>>& predictions, int lotId, int fallbackValue)
+		{
+			for (const auto& [predictedLotId, availableSpaces] : predictions)
+			{
+				if (predictedLotId == lotId)
+				{
+					return availableSpaces;
+				}
+			}
+
+			return fallbackValue;
+		};
 
 	std::vector<int> lotIds;
 	lotIds.reserve(activity.size());
@@ -420,6 +435,11 @@ void Server::handleApiAdminLotActivity(const httplib::Request& req, httplib::Res
 		std::vector<std::pair<std::time_t, std::vector<int>>> snapshots;
 		for (const auto& [snapshotTime, values] : activity.at(lotId))
 		{
+			if (snapshotTime < startTime || snapshotTime > endTime)
+			{
+				continue;
+			}
+
 			snapshots.emplace_back(snapshotTime, values);
 		}
 
@@ -451,6 +471,7 @@ void Server::handleApiAdminLotActivity(const httplib::Request& req, httplib::Res
 		}
 
 		nlohmann::json points = nlohmann::json::array();
+
 		for (const auto& [snapshotTime, values] : snapshots)
 		{
 			const int actualNormalOccupied = values.size() > 0 ? values[0] : 0;
@@ -458,33 +479,86 @@ void Server::handleApiAdminLotActivity(const httplib::Request& req, httplib::Res
 			const int actualReservedOccupied = values.size() > 2 ? values[2] : 0;
 
 			points.push_back(
-			{
-				{"time", snapshotTime},
+				{
+					{"time", snapshotTime},
 
-				{"normalOccupied", actualNormalOccupied},
-				{"normalTotal", normalTotal},
+					{"normalOccupied", actualNormalOccupied},
+					{"predictedNormalOccupied", nullptr},
+					{"normalTotal", normalTotal},
 
-				{"disabledOccupied", actualDisabledOccupied},
-				{"disabledTotal", disabledTotal},
+					{"disabledOccupied", actualDisabledOccupied},
+					{"predictedDisabledOccupied", nullptr},
+					{"disabledTotal", disabledTotal},
 
-				{"reservedOccupied", actualReservedOccupied},
-				{"reservedTotal", reservedTotal}
-			});
+					{"reservedOccupied", actualReservedOccupied},
+					{"predictedReservedOccupied", nullptr},
+					{"reservedTotal", reservedTotal}
+				});
 		}
 
-		lots.push_back(
+		const std::time_t firstFutureQuarter =
+			((std::max(startTime, serverNow + 1) + 899) / 900) * 900;
+
+		for (std::time_t pointTime = firstFutureQuarter; pointTime <= endTime; pointTime += 15 * 60)
 		{
-			{"lotId", lotId},
-			{"normalTotal", normalTotal},
-			{"disabledTotal", disabledTotal},
-			{"reservedTotal", reservedTotal},
-			{"points", points}
-		});
+			const auto normalPredictions = m_service.predictAvailableNormal(pointTime, lotId);
+			const auto disabledPredictions = m_service.predictAvailableDisabled(pointTime, lotId);
+			const auto reservedPredictions = m_service.predictAvailableReserved(pointTime, lotId);
+
+			const int predictedNormalAvailable =
+				findPredictedAvailableForLot(normalPredictions, lotId, normalTotal);
+			const int predictedDisabledAvailable =
+				findPredictedAvailableForLot(disabledPredictions, lotId, disabledTotal);
+			const int predictedReservedAvailable =
+				findPredictedAvailableForLot(reservedPredictions, lotId, reservedTotal);
+
+			const int predictedNormalOccupied =
+				std::clamp(normalTotal - predictedNormalAvailable, 0, normalTotal);
+			const int predictedDisabledOccupied =
+				std::clamp(disabledTotal - predictedDisabledAvailable, 0, disabledTotal);
+			const int predictedReservedOccupied =
+				std::clamp(reservedTotal - predictedReservedAvailable, 0, reservedTotal);
+
+			points.push_back(
+				{
+					{"time", pointTime},
+
+					{"normalOccupied", nullptr},
+					{"predictedNormalOccupied", predictedNormalOccupied},
+					{"normalTotal", normalTotal},
+
+					{"disabledOccupied", nullptr},
+					{"predictedDisabledOccupied", predictedDisabledOccupied},
+					{"disabledTotal", disabledTotal},
+
+					{"reservedOccupied", nullptr},
+					{"predictedReservedOccupied", predictedReservedOccupied},
+					{"reservedTotal", reservedTotal}
+				});
+		}
+
+		std::sort(
+			points.begin(),
+			points.end(),
+			[](const nlohmann::json& left, const nlohmann::json& right)
+			{
+				return left.at("time").get<long long>() < right.at("time").get<long long>();
+			});
+
+		lots.push_back(
+			{
+				{"lotId", lotId},
+				{"normalTotal", normalTotal},
+				{"disabledTotal", disabledTotal},
+				{"reservedTotal", reservedTotal},
+				{"points", points}
+			});
 	}
 
 	nlohmann::json reply =
 	{
 		{"status", "ok"},
+		{"serverTime", serverNow},
 		{"lots", lots}
 	};
 

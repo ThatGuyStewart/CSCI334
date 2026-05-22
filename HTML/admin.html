@@ -97,7 +97,7 @@
             justify-content: space-between;
             align-items: flex-end;
             font-size: 0.8rem;
-            color: #4b5563;
+            color: #4b5763;
             padding: 2px 0;
             box-sizing: border-box;
         }
@@ -162,7 +162,7 @@
         }
 
         .predicted {
-            background: #9ca3af;
+            background: #b51e3e;
         }
     </style>
 </head>
@@ -187,8 +187,8 @@
         <div class="panel">
             <h2>Session</h2>
             <div>Admin user: <strong id="adminUser">None</strong></div>
-            <div>Browser current time: <strong id="browserCurrentTime">Unknown</strong></div>
-            <div>Server current time: <strong id="serverCurrentTime">Unknown</strong></div>
+            <div>Current time: <strong id="browserCurrentTime">Unknown</strong></div>
+            <div>Last updated: <strong id="serverCurrentTime">Unknown</strong></div>
             <div>
                 <button id="refreshDashboardButton">Refresh Dashboard</button>
             </div>
@@ -203,6 +203,11 @@
                 <button id="range24hButton">Past 24 Hours</button>
                 <button id="rangeWeekButton">Past Week</button>
                 <button id="rangeMonthButton">Past Month</button>
+            </div>
+
+            <div class="legend">
+                <span><i class="swatch actual"></i>Actual</span>
+                <span><i class="swatch predicted"></i>Predicted</span>
             </div>
 
             <div id="graphs" class="graph-grid"></div>

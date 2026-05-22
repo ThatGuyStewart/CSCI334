@@ -201,6 +201,31 @@ std::vector<std::pair<int, int>> CarPark::getNumberOfAvailableDisabled(int lotId
 	return availability;
 }
 
+std::vector<std::pair<int, int>> CarPark::getNumberOfAvailableReserved(int lotId)
+{
+	std::vector<std::pair<int, int>> availability;
+
+	if (lotId == 0)
+	{
+		for (const auto& [id, lot] : m_lots)
+		{
+			if (lot)
+			{
+				availability.push_back(std::make_pair(id, lot->getNumberOfAvailableReserved()));
+			}
+		}
+		return availability;
+	}
+
+	auto it = m_lots.find(lotId);
+	if (it != m_lots.end() && it->second)
+	{
+		availability.push_back(std::make_pair(lotId, it->second->getNumberOfAvailableReserved()));
+	}
+
+	return availability;
+}
+
 std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> CarPark::getAvailableNormal(int lotId)
 {
 	std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> availability;

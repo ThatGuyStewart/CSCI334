@@ -205,7 +205,7 @@ OccupancyParameters Simulation::getOccupancyParameters(const std::tm& localTm) c
 	return parameters;
 }
 
-std::vector<Simulation::CandidateChange> Simulation::buildCandidateChanges(
+std::vector<CandidateChange> Simulation::buildCandidateChanges(
 	const std::vector<std::pair<int, std::vector<std::pair<int, bool>>>>& lots,
 	double minOccupancy,
 	double maxOccupancy)
@@ -281,6 +281,8 @@ void Simulation::simulateParkingBehavior()
 #endif
 
 		const OccupancyParameters parameters = getOccupancyParameters(localTm);
+		syncReservedSpacesWithBookings(std::chrono::system_clock::now());
+
 		auto candidates = buildCandidateChanges(
 			m_service.getAvailableNormal(0),
 			parameters.normalMin,
@@ -325,7 +327,18 @@ void Simulation::simulateParkingBehavior()
 					continue;
 				}
 
+				const bool wasOccupied = space.isOccupied();
 				space.setOccupied(selected.occupied);
+				const bool isOccupied = space.isOccupied();
+
+				if (!wasOccupied && isOccupied)
+				{
+					handleSpaceBecomingOccupied(*lotIt->second, space);
+				}
+				else if (wasOccupied && !isOccupied)
+				{
+					handleSpaceBecomingAvailable(*lotIt->second, space);
+				}
 			}
 			catch (const std::exception& e)
 			{
@@ -422,58 +435,81 @@ void Simulation::seedDatabaseWithHistoricalData()
 		std::chrono::minutes(
 			std::chrono::duration_cast<std::chrono::minutes>(now.time_since_epoch()).count()));
 
+	std::unordered_map<std::string, std::vector<std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>>> bookingsByEmail;
+
+	for (int daysAgo = 84; daysAgo >= 0; --daysAgo)
+	{
+		for (int quarterHour = 0; quarterHour < 96; ++quarterHour)
+		{
+			const int minutesOfDay = quarterHour * 15;
+			const int hour = minutesOfDay / 60;
+			const int minute = minutesOfDay % 60;
+
+			std::time_t currentTime = std::time(nullptr);
+			std::tm localTm{};
+#if defined(_WIN32)
+			localtime_s(&localTm, &currentTime);
+#else
+			localTm = *std::localtime(&currentTime);
+#endif
+
+			localTm.tm_mday -= daysAgo;
+			localTm.tm_hour = hour;
+			localTm.tm_min = minute;
+			localTm.tm_sec = 0;
+			localTm.tm_isdst = -1;
+
+			const std::time_t slotEpoch = std::mktime(&localTm);
+			const auto slotStart = std::chrono::system_clock::from_time_t(slotEpoch);
+
+#if defined(_WIN32)
+			localtime_s(&localTm, &slotEpoch);
+#else
+			localTm = *std::localtime(&slotEpoch);
+#endif
+
+			const int bookingTargetPerLot = getHistoricalReservedBookingTarget(localTm);
+
+			for (int lotId : lotIds)
+			{
+				for (int i = 0; i < bookingTargetPerLot; ++i)
+				{
+					const auto startTime = slotStart + std::chrono::minutes(i * 15);
+					const auto endTime = startTime + std::chrono::hours(2);
+
+					trySeedHistoricalBooking(
+						tx,
+						emails,
+						bookingsByEmail,
+						lotId,
+						daysAgo == 0 ? "LIVE-" : "HIST-",
+						bookingCounter,
+						startTime,
+						endTime);
+				}
+			}
+		}
+	}
+
 	for (int lotId : lotIds)
 	{
-		const int currentBookingsPerLot = 2;
-		const int futureBookingsPerLot = 3;
-
-		for (int i = 0; i < currentBookingsPerLot; ++i)
+		for (int i = 0; i < 3; ++i)
 		{
-			const std::string& email = emails[bookingCounter % emails.size()];
-			const std::string registration = "LIVE-" + std::to_string(100 + bookingCounter);
-
-			const auto startTime = currentStartBase - std::chrono::minutes(30 + (i * 15));
-			const auto endTime = startTime + std::chrono::hours(2);
-
-			const auto startEpoch = std::chrono::duration_cast<std::chrono::seconds>(startTime.time_since_epoch()).count();
-			const auto endEpoch = std::chrono::duration_cast<std::chrono::seconds>(endTime.time_since_epoch()).count();
-
-			tx.exec_params(
-				"INSERT INTO bookings (lot_id, email, registration, start_time, end_time, status) "
-				"VALUES ($1, $2, $3, to_timestamp($4), to_timestamp($5), 'Active')",
-				lotId,
-				email,
-				registration,
-				startEpoch,
-				endEpoch);
-
-			++bookingCounter;
-		}
-
-		for (int i = 0; i < futureBookingsPerLot; ++i)
-		{
-			const std::string& email = emails[bookingCounter % emails.size()];
-			const std::string registration = "TEST-" + std::to_string(100 + bookingCounter);
-
 			const auto rawStartTime = currentStartBase + std::chrono::hours(24 * (i + 1)) + std::chrono::hours(lotId);
 			const auto startTime = std::chrono::system_clock::time_point(
 				std::chrono::minutes(
 					std::chrono::duration_cast<std::chrono::minutes>(rawStartTime.time_since_epoch()).count()));
 			const auto endTime = startTime + std::chrono::hours(2);
 
-			const auto startEpoch = std::chrono::duration_cast<std::chrono::seconds>(startTime.time_since_epoch()).count();
-			const auto endEpoch = std::chrono::duration_cast<std::chrono::seconds>(endTime.time_since_epoch()).count();
-
-			tx.exec_params(
-				"INSERT INTO bookings (lot_id, email, registration, start_time, end_time, status) "
-				"VALUES ($1, $2, $3, to_timestamp($4), to_timestamp($5), 'Active')",
+			trySeedHistoricalBooking(
+				tx,
+				emails,
+				bookingsByEmail,
 				lotId,
-				email,
-				registration,
-				startEpoch,
-				endEpoch);
-
-			++bookingCounter;
+				"TEST-",
+				bookingCounter,
+				startTime,
+				endTime);
 		}
 	}
 
@@ -486,9 +522,22 @@ void Simulation::seedDatabaseWithHistoricalData()
 		disabledRemainingByLot.emplace(lotId, std::vector<int>(10, 0));
 	}
 
-	for (int daysAgo = 84; daysAgo >= 1; --daysAgo)
+	std::time_t nowTime = std::time(nullptr);
+	std::tm nowLocal{};
+#if defined(_WIN32)
+	localtime_s(&nowLocal, &nowTime);
+#else
+	nowLocal = *std::localtime(&nowTime);
+#endif
+
+	for (int daysAgo = 84; daysAgo >= 0; --daysAgo)
 	{
-		for (int quarterHour = 0; quarterHour < 96; ++quarterHour)
+		const int lastQuarterHour =
+			(daysAgo == 0)
+			? ((nowLocal.tm_hour * 60 + nowLocal.tm_min) / 15)
+			: 95;
+
+		for (int quarterHour = 0; quarterHour <= lastQuarterHour; ++quarterHour)
 		{
 			const int minutesOfDay = quarterHour * 15;
 			const int hour = minutesOfDay / 60;
@@ -552,21 +601,24 @@ void Simulation::seedDatabaseWithHistoricalData()
 					? 0
 					: reservedResult[0]["reserved_occupied"].as<int>();
 
+				const int reservedCapacity = 10;
+				const int availableReserved = std::max(0, reservedCapacity - reservedOccupied);
+
 				tx.exec_params(
 					"INSERT INTO availability "
-					"(lot_id, snapshot_time, available_normal_spaces, available_disabled_spaces, reserved_occupied_spaces, updated_at) "
+					"(lot_id, snapshot_time, available_normal_spaces, available_disabled_spaces, available_reserved_spaces, updated_at) "
 					"VALUES ($1, to_timestamp($2), $3, $4, $5, NOW()) "
 					"ON CONFLICT (lot_id, snapshot_time) "
 					"DO UPDATE SET "
 					"available_normal_spaces = EXCLUDED.available_normal_spaces, "
 					"available_disabled_spaces = EXCLUDED.available_disabled_spaces, "
-					"reserved_occupied_spaces = EXCLUDED.reserved_occupied_spaces, "
+					"available_reserved_spaces = EXCLUDED.available_reserved_spaces, "
 					"updated_at = NOW()",
 					lotId,
 					static_cast<long long>(snapshotEpoch),
 					std::max(0, normalCapacity - occupiedNormal),
 					std::max(0, disabledCapacity - occupiedDisabled),
-					reservedOccupied);
+					availableReserved);
 
                 advanceHistoricalOccupancyDurations(normalRemaining);
 				advanceHistoricalOccupancyDurations(disabledRemaining);
@@ -644,13 +696,225 @@ void Simulation::seedDatabaseWithHistoricalData()
 			for (int i = 0; i < targetOccupiedNormal && i < static_cast<int>(normalSpaces.size()); ++i)
 			{
 				normalSpaces[i]->setOccupied(true);
+				handleSpaceBecomingOccupied(*lot, *normalSpaces[i]);
 			}
 
 			for (int i = 0; i < targetOccupiedDisabled && i < static_cast<int>(disabledSpaces.size()); ++i)
 			{
 				disabledSpaces[i]->setOccupied(true);
+				handleSpaceBecomingOccupied(*lot, *disabledSpaces[i]);
 			}
+		}
+		syncReservedSpacesWithBookings(std::chrono::system_clock::now());
+	}
+
+}
+
+int Simulation::getHistoricalReservedBookingTarget(const std::tm& localTm) const
+{
+	const bool weekend = (localTm.tm_wday == 0 || localTm.tm_wday == 6);
+	const bool holiday = isHoliday(localTm.tm_mon + 1, localTm.tm_mday);
+	const bool holidaySeason = isHolidaySeason(localTm.tm_mon + 1);
+
+	if (localTm.tm_hour < 6)
+	{
+		return 0;
+	}
+
+	if (weekend || holiday || holidaySeason)
+	{
+		if (localTm.tm_hour >= 10 && localTm.tm_hour < 15) return 1;
+		if (localTm.tm_hour >= 8 && localTm.tm_hour < 17) return 0;
+		return 0;
+	}
+
+	if (localTm.tm_hour == 8) return 1;
+	if (localTm.tm_hour >= 9 && localTm.tm_hour < 15) return 3;
+	if (localTm.tm_hour == 15) return 2;
+	if (localTm.tm_hour == 16) return 1;
+
+	return 0;
+}
+
+bool Simulation::trySeedHistoricalBooking(
+	pqxx::work& tx,
+	const std::vector<std::string>& emails,
+	std::unordered_map<std::string, std::vector<std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>>>& bookingsByEmail,
+	int lotId,
+	const std::string& registrationPrefix,
+	int& bookingCounter,
+	std::chrono::system_clock::time_point startTime,
+	std::chrono::system_clock::time_point endTime)
+{
+	if (emails.empty() || startTime >= endTime)
+	{
+		return false;
+	}
+
+	for (size_t attempt = 0; attempt < emails.size(); ++attempt)
+	{
+		const std::string& email = emails[(bookingCounter + static_cast<int>(attempt)) % emails.size()];
+		auto& userBookings = bookingsByEmail[email];
+
+		const bool overlaps = std::any_of(
+			userBookings.begin(),
+			userBookings.end(),
+			[startTime, endTime](const auto& interval)
+			{
+				return startTime < interval.second && endTime > interval.first;
+			});
+
+		if (overlaps)
+		{
+			continue;
+		}
+
+		const std::string registration = registrationPrefix + std::to_string(100 + bookingCounter);
+
+		tx.exec_params(
+			"INSERT INTO bookings (lot_id, email, registration, start_time, end_time, status) "
+			"VALUES ($1, $2, $3, to_timestamp($4), to_timestamp($5), 'Active')",
+			lotId,
+			email,
+			registration,
+			std::chrono::duration_cast<std::chrono::seconds>(startTime.time_since_epoch()).count(),
+			std::chrono::duration_cast<std::chrono::seconds>(endTime.time_since_epoch()).count());
+
+		userBookings.emplace_back(startTime, endTime);
+		++bookingCounter;
+		return true;
+	}
+
+	return false;
+}
+
+long long Simulation::getSpaceKey(int lotId, int spaceId) const
+{
+	return (static_cast<long long>(lotId) << 32) | static_cast<unsigned int>(spaceId);
+}
+
+void Simulation::handleSpaceBecomingOccupied(Lot& lot, Space& space)
+{
+	const auto now = std::chrono::system_clock::now();
+
+	std::uniform_real_distribution<double> probability(0.0, 1.0);
+	std::uniform_int_distribution<int> stayMinutesDist(30, 240);
+	std::uniform_int_distribution<int> overstayMinutesDist(5, 20);
+	std::uniform_int_distribution<int> earlyLeaveMinutesDist(5, 30);
+
+	const double ticketRoll = probability(m_rng);
+	const bool hasTicket = ticketRoll < 0.99;
+
+	const auto expectedDepartureTime = now + std::chrono::minutes(stayMinutesDist(m_rng));
+	auto ticketExpiryTime = expectedDepartureTime;
+
+	if (hasTicket)
+	{
+		const double durationBehaviorRoll = probability(m_rng);
+
+		if (durationBehaviorRoll < 0.05)
+		{
+			ticketExpiryTime = expectedDepartureTime - std::chrono::minutes(overstayMinutesDist(m_rng));
+		}
+		else if (durationBehaviorRoll < 0.20)
+		{
+			ticketExpiryTime = expectedDepartureTime + std::chrono::minutes(earlyLeaveMinutesDist(m_rng));
+		}
+
+		if (lot.m_ticketMachine)
+		{
+			lot.m_ticketMachine->issueTicket(now, ticketExpiryTime);
 		}
 	}
 
+	m_spaceTicketInfo[getSpaceKey(space.getLotId(), space.getSpaceId())] =
+	{
+		hasTicket,
+		expectedDepartureTime,
+		ticketExpiryTime
+	};
+}
+
+void Simulation::handleSpaceBecomingAvailable(Lot& lot, Space& space)
+{
+	(void)lot;
+	m_spaceTicketInfo.erase(getSpaceKey(space.getLotId(), space.getSpaceId()));
+}
+
+void Simulation::syncReservedSpacesWithBookings(std::chrono::system_clock::time_point currentTime)
+{
+	if (!m_service.m_carPark)
+	{
+		return;
+	}
+
+	for (auto& [lotId, lot] : m_service.m_carPark->m_lots)
+	{
+		if (!lot)
+		{
+			continue;
+		}
+
+		int activeReservationCount = 0;
+		for (const auto& [email, booking] : lot->m_bookings)
+		{
+			if (!booking)
+			{
+				continue;
+			}
+
+			if (booking->getStart() <= currentTime && booking->getEnd() > currentTime)
+			{
+				++activeReservationCount;
+			}
+		}
+
+		const int reservedCapacity = static_cast<int>(lot->m_reservedSpaces.size());
+		const int targetOccupiedReserved = std::clamp(activeReservationCount, 0, reservedCapacity);
+
+		std::vector<ReservedSpace*> occupiedReservedSpaces;
+		std::vector<ReservedSpace*> availableReservedSpaces;
+		occupiedReservedSpaces.reserve(lot->m_reservedSpaces.size());
+		availableReservedSpaces.reserve(lot->m_reservedSpaces.size());
+
+		for (auto& [spaceId, reservedSpace] : lot->m_reservedSpaces)
+		{
+			if (!reservedSpace)
+			{
+				continue;
+			}
+
+			if (reservedSpace->isOccupied())
+			{
+				occupiedReservedSpaces.push_back(reservedSpace.get());
+			}
+			else
+			{
+				availableReservedSpaces.push_back(reservedSpace.get());
+			}
+		}
+
+		const int currentOccupiedReserved = static_cast<int>(occupiedReservedSpaces.size());
+
+		if (currentOccupiedReserved < targetOccupiedReserved)
+		{
+			const int toOccupy = targetOccupiedReserved - currentOccupiedReserved;
+			for (int i = 0; i < toOccupy && i < static_cast<int>(availableReservedSpaces.size()); ++i)
+			{
+				ReservedSpace& reservedSpace = *availableReservedSpaces[i];
+				reservedSpace.setOccupied(true);
+				handleSpaceBecomingOccupied(*lot, reservedSpace);
+			}
+		}
+		else if (currentOccupiedReserved > targetOccupiedReserved)
+		{
+			const int toRelease = currentOccupiedReserved - targetOccupiedReserved;
+			for (int i = 0; i < toRelease && i < static_cast<int>(occupiedReservedSpaces.size()); ++i)
+			{
+				ReservedSpace& reservedSpace = *occupiedReservedSpaces[i];
+				reservedSpace.setOccupied(false);
+				handleSpaceBecomingAvailable(*lot, reservedSpace);
+			}
+		}
+	}
 }

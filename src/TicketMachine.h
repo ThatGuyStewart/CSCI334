@@ -8,6 +8,8 @@
 
 class TicketMachine
 {
+	friend class Simulation; // Allow Simulation to access private members for testing purposes
+
 private:
 	int m_lotId;
 	std::vector<std::unique_ptr<Ticket>> m_tickets;

@@ -191,6 +191,16 @@ int Lot::getNumberOfAvailableDisabled()
 	return count;
 }
 
+int Lot::getNumberOfAvailableReserved()
+{
+	int count = 0;
+	for (const auto& [id, space] : m_reservedSpaces)
+	{
+		if (!space->isOccupied()) count++;
+	}
+	return count;
+}
+
 std::vector<std::pair<int, bool>> Lot::getAvailableNormal()
 {
 	std::vector<std::pair<int, bool>> available;
@@ -272,6 +282,6 @@ int Lot::getParkedWithoutTicket()
 		if (space->isOccupied()) parked++;
 	}
 
-	return parked - m_ticketMachine->getNumberOfTickets();
+	return std::max(0, parked - m_ticketMachine->getNumberOfTickets());
 }
 

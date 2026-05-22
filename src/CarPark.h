@@ -62,6 +62,7 @@ public:
 
 	std::vector<std::pair<int, int>> getNumberOfAvailableNormal(int lotId = 0);
 	std::vector<std::pair<int, int>> getNumberOfAvailableDisabled(int lotId = 0);
+	std::vector<std::pair<int, int>> getNumberOfAvailableReserved(int lotId = 0);
 	std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableNormal(int lotId = 0);
 	std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableDisabled(int lotId = 0);
 	void removeExpiredBookings();

@@ -232,6 +232,75 @@ std::vector<std::pair<int, int>> Database::predictAvailableDisabled(std::time_t 
 	}
 }
 
+std::vector<std::pair<int, int>> Database::predictAvailableReserved(std::time_t futureTime, int lotId)
+{
+	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
+	if (!isConnected()) return {};
+
+	try
+	{
+		refreshBookingStatuses();
+
+		pqxx::read_transaction tx(*m_connection);
+
+		pqxx::result result = (lotId == 0)
+			? tx.exec_params(
+				"WITH capacities AS ( "
+				"    SELECT lot_id, "
+				"           SUM(CASE WHEN type = 'reserved' THEN 1 ELSE 0 END)::int AS reserved_capacity "
+				"    FROM spaces "
+				"    GROUP BY lot_id "
+				") "
+				"SELECT c.lot_id, "
+				"       GREATEST(0, c.reserved_capacity - COUNT(b.*)::int) AS predicted_available_reserved_spaces "
+				"FROM capacities c "
+				"LEFT JOIN bookings b "
+				"  ON b.lot_id = c.lot_id "
+				" AND b.status = 'Active' "
+				" AND b.start_time <= to_timestamp($1) "
+				" AND b.end_time > to_timestamp($1) "
+				"GROUP BY c.lot_id, c.reserved_capacity "
+				"ORDER BY c.lot_id",
+				static_cast<long long>(futureTime))
+			: tx.exec_params(
+				"WITH capacities AS ( "
+				"    SELECT lot_id, "
+				"           SUM(CASE WHEN type = 'reserved' THEN 1 ELSE 0 END)::int AS reserved_capacity "
+				"    FROM spaces "
+				"    WHERE lot_id = $1 "
+				"    GROUP BY lot_id "
+				") "
+				"SELECT c.lot_id, "
+				"       GREATEST(0, c.reserved_capacity - COUNT(b.*)::int) AS predicted_available_reserved_spaces "
+				"FROM capacities c "
+				"LEFT JOIN bookings b "
+				"  ON b.lot_id = c.lot_id "
+				" AND b.status = 'Active' "
+				" AND b.start_time <= to_timestamp($2) "
+				" AND b.end_time > to_timestamp($2) "
+				"GROUP BY c.lot_id, c.reserved_capacity",
+				lotId,
+				static_cast<long long>(futureTime));
+
+		std::vector<std::pair<int, int>> predictions;
+		predictions.reserve(result.size());
+
+		for (const auto& row : result)
+		{
+			predictions.emplace_back(
+				row["lot_id"].as<int>(),
+				row["predicted_available_reserved_spaces"].as<int>());
+		}
+
+		return predictions;
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << "Predict available reserved spaces failed: " << e.what() << std::endl;
+		return {};
+	}
+}
+
 std::vector<TempBooking> Database::getUpcomingBookings(const std::string& email)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
@@ -317,6 +386,7 @@ bool Database::loadAccounts()
 }
 std::unique_ptr<CarPark> Database::loadCarPark()
 {
+	std::cout << "Loading data from database..." << std::endl;
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
 
 	if (!isConnected())
@@ -878,12 +948,14 @@ bool Database::createSchema()
 				snapshot_time TIMESTAMPTZ NOT NULL,
 				available_normal_spaces INT NOT NULL,
 				available_disabled_spaces INT NOT NULL,
-				reserved_occupied_spaces INT NOT NULL DEFAULT 0,
+				available_reserved_spaces INT NOT NULL DEFAULT 0,
 				updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 				PRIMARY KEY (lot_id, snapshot_time),
 				FOREIGN KEY (lot_id) REFERENCES lots(lot_id) ON DELETE CASCADE
 			);
-			
+			ALTER TABLE availability
+			ADD COLUMN IF NOT EXISTS available_reserved_spaces INT NOT NULL DEFAULT 0;			
+
 			ALTER TABLE availability
 			ALTER COLUMN updated_at TYPE TIMESTAMPTZ
 			USING updated_at AT TIME ZONE current_setting('TIMEZONE');
@@ -945,7 +1017,8 @@ std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> Datab
 			"    SELECT "
 			"        lot_id, "
 			"        SUM(CASE WHEN type = 'normal' THEN 1 ELSE 0 END)::int AS normal_capacity, "
-			"        SUM(CASE WHEN type = 'disabled' THEN 1 ELSE 0 END)::int AS disabled_capacity "
+			"        SUM(CASE WHEN type = 'disabled' THEN 1 ELSE 0 END)::int AS disabled_capacity, "
+			"        SUM(CASE WHEN type = 'reserved' THEN 1 ELSE 0 END)::int AS reserved_capacity "
 			"    FROM spaces "
 			"    GROUP BY lot_id "
 			") "
@@ -954,11 +1027,9 @@ std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> Datab
 			"    EXTRACT(EPOCH FROM a.snapshot_time)::bigint AS snapshot_epoch, "
 			"    GREATEST(0, c.normal_capacity - a.available_normal_spaces) AS normal_occupied, "
 			"    GREATEST(0, c.disabled_capacity - a.available_disabled_spaces) AS disabled_occupied, "
-			"    a.reserved_occupied_spaces "
+			"    GREATEST(0, c.reserved_capacity - a.available_reserved_spaces) AS reserved_occupied "
 			"FROM availability a "
 			"INNER JOIN capacities c ON c.lot_id = a.lot_id "
-			"WHERE EXTRACT(SECOND FROM a.snapshot_time) = 0 "
-			"  AND (EXTRACT(MINUTE FROM a.snapshot_time)::int % 15) = 0 "
 			"ORDER BY a.lot_id, a.snapshot_time");
 
 		for (const auto& row : result)
@@ -967,7 +1038,7 @@ std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> Datab
 			const std::time_t snapshotTime = static_cast<std::time_t>(row["snapshot_epoch"].as<long long>());
 			const int normalOccupied = row["normal_occupied"].as<int>();
 			const int disabledOccupied = row["disabled_occupied"].as<int>();
-			const int reservedOccupied = row["reserved_occupied_spaces"].as<int>();
+			const int reservedOccupied = row["reserved_occupied"].as<int>();
 
 			activity[currentLotId][snapshotTime] =
 			{
@@ -998,51 +1069,29 @@ bool Database::saveAvailabilitySnapshot(
 	{
 		pqxx::work tx(*m_connection);
 
-		pqxx::result reservedResult = tx.exec_params(
-			"SELECT lot_id, COUNT(*)::int AS reserved_occupied "
-			"FROM bookings "
-			"WHERE status = 'Active' "
-			"  AND start_time <= to_timestamp($1) "
-			"  AND end_time > to_timestamp($1) "
-			"GROUP BY lot_id",
-			static_cast<long long>(snapshotTime));
-
-		std::unordered_map<int, int> reservedByLot;
-		reservedByLot.reserve(reservedResult.size());
-
-		for (const auto& row : reservedResult)
-		{
-			const int lotId = row["lot_id"].as<int>();
-			const int reservedOccupied = row["reserved_occupied"].as<int>();
-			reservedByLot[lotId] = reservedOccupied;
-		}
-
 		for (const auto& [lotId, values] : availabilityByLot)
 		{
-			if (values.size() != 2) continue;
+			if (values.size() < 2) continue;
 
 			const int availableNormalSpaces = values[0];
 			const int availableDisabledSpaces = values[1];
-
-			auto reservedIt = reservedByLot.find(lotId);
-			const int reservedOccupiedSpaces =
-				(reservedIt != reservedByLot.end()) ? reservedIt->second : 0;
+			const int availableReservedSpaces = values.size() > 2 ? values[2] : 0;
 
 			tx.exec_params(
 				"INSERT INTO availability "
-				"(lot_id, snapshot_time, available_normal_spaces, available_disabled_spaces, reserved_occupied_spaces, updated_at) "
+				"(lot_id, snapshot_time, available_normal_spaces, available_disabled_spaces, available_reserved_spaces, updated_at) "
 				"VALUES ($1, to_timestamp($2), $3, $4, $5, NOW()) "
 				"ON CONFLICT (lot_id, snapshot_time) "
 				"DO UPDATE SET "
 				"available_normal_spaces = EXCLUDED.available_normal_spaces, "
 				"available_disabled_spaces = EXCLUDED.available_disabled_spaces, "
-				"reserved_occupied_spaces = EXCLUDED.reserved_occupied_spaces, "
+				"available_reserved_spaces = EXCLUDED.available_reserved_spaces, "
 				"updated_at = NOW()",
 				lotId,
 				static_cast<long long>(snapshotTime),
 				availableNormalSpaces,
 				availableDisabledSpaces,
-				reservedOccupiedSpaces);
+				availableReservedSpaces);
 		}
 
 		tx.commit();

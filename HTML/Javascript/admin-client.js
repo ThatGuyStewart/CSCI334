@@ -18,6 +18,7 @@
     const browserCurrentTimeElement = document.getElementById("browserCurrentTime");
     const serverCurrentTimeElement = document.getElementById("serverCurrentTime");
 
+    let dashboardRefreshTimer = null;
     let allActivityLots = [];
     let allParkedWithoutTicketLots = [];
     let selectedRange = "24h";
@@ -91,17 +92,41 @@
         }
 
         updateBrowserCurrentTime();
-        console.log(graphCenterTimeInput.value);
-        console.log(toEpochSeconds(graphCenterTimeInput.value));
-        console.log(new Date(toEpochSeconds(graphCenterTimeInput.value) * 1000).toISOString());
+        startDashboardAutoRefresh();
     }
 
     function setLoggedOut() {
         adminUserElement.textContent = "None";
         dashboard.classList.add("hidden");
         loginPanel.classList.remove("hidden");
+        stopDashboardAutoRefresh();
     }
 
+    function startDashboardAutoRefresh() {
+        if (dashboardRefreshTimer !== null) {
+            clearInterval(dashboardRefreshTimer);
+        }
+
+        dashboardRefreshTimer = setInterval(async () => {
+            if (dashboard.classList.contains("hidden")) {
+                return;
+            }
+
+            try {
+                await loadDashboard();
+            }
+            catch (error) {
+                console.error("Auto-refresh failed", error);
+            }
+        }, 30000);
+    }
+
+    function stopDashboardAutoRefresh() {
+        if (dashboardRefreshTimer !== null) {
+            clearInterval(dashboardRefreshTimer);
+            dashboardRefreshTimer = null;
+        }
+    }
     function refreshLotSelector(lotIds) {
         const currentValue = Number(lotSelectorElement.value);
         lotSelectorElement.innerHTML = "";
@@ -145,20 +170,24 @@
         }
     }
 
-    function filterActivityLotsByRange(activityLots, range) {
-    const center = getCenterEpochSeconds();
-    const halfWindow = Math.floor(getRangeWindowSeconds(range) / 2);
-    const rangeStart = center - halfWindow;
-    const rangeEnd = center + halfWindow;
+    function getSelectedRangeBounds() {
+        const endTime = getCenterEpochSeconds();
+        const startTime = endTime - getRangeWindowSeconds(selectedRange);
 
-    return (activityLots ?? []).map((lot) => ({
-        ...lot,
-        rangeStart,
-        rangeEnd,
-        points: (lot.points ?? []).filter(
-            (p) => p.time >= rangeStart && p.time <= rangeEnd
-        )
-    }));
+        return { startTime, endTime };
+    }
+
+    function filterActivityLotsByRange(activityLots) {
+        const { startTime, endTime } = getSelectedRangeBounds();
+
+        return (activityLots ?? []).map((lot) => ({
+            ...lot,
+            rangeStart: startTime,
+            rangeEnd: endTime,
+            points: (lot.points ?? []).filter(
+                (p) => p.time >= startTime && p.time <= endTime
+            )
+        }));
     }
 
 
@@ -256,7 +285,9 @@
         canvas,
         points,
         actualColor,
+        predictedColor,
         actualSelector,
+        predictedSelector,
         totalSpaces,
         rangeStart,
         rangeEnd) {
@@ -297,6 +328,18 @@
             rangeStart,
             rangeEnd,
             false);
+
+        drawSeries(
+            ctx,
+            width,
+            height,
+            points,
+            maxY,
+            predictedColor,
+            predictedSelector,
+            rangeStart,
+            rangeEnd,
+            true);
     }
 
     function buildVerticalScale(totalSpaces) {
@@ -310,8 +353,10 @@
     function createChartBlock(
         titleText,
         actualColor,
+        predictedColor,
         points,
         actualSelector,
+        predictedSelector,
         totalSpaces,
         rangeStart,
         rangeEnd) {
@@ -348,7 +393,9 @@
             canvas,
             points,
             actualColor,
+            predictedColor,
             actualSelector,
+            predictedSelector,
             totalSpaces,
             rangeStart,
             rangeEnd);
@@ -396,17 +443,20 @@
             chartGroup.className = "chart-group";
 
             const points = lot.points ?? [];
-            const rangeStart = lot.rangeStart ?? getCenterEpochSeconds();
-            const rangeEnd = lot.rangeEnd ?? getCenterEpochSeconds();
+            const rangeStart = lot.rangeStart ?? getSelectedRangeBounds().startTime;
+            const rangeEnd = lot.rangeEnd ?? getSelectedRangeBounds().endTime;
 
             const actualColor = "#3b63fb";
+            const predictedColor = "#b51e3e";
 
             chartGroup.appendChild(
                 createChartBlock(
                     "Normal Spaces",
                     actualColor,
+                    predictedColor,
                     points,
                     (point) => point.normalOccupied,
+                    (point) => point.predictedNormalOccupied,
                     lot.normalTotal ?? 0,
                     rangeStart,
                     rangeEnd));
@@ -415,8 +465,10 @@
                 createChartBlock(
                     "Disabled Spaces",
                     actualColor,
+                    predictedColor,
                     points,
                     (point) => point.disabledOccupied,
+                    (point) => point.predictedDisabledOccupied,
                     lot.disabledTotal ?? 0,
                     rangeStart,
                     rangeEnd));
@@ -425,8 +477,10 @@
                 createChartBlock(
                     "Reserved Spaces",
                     actualColor,
+                    predictedColor,
                     points,
                     (point) => point.reservedOccupied,
+                    (point) => point.predictedReservedOccupied,
                     lot.reservedTotal ?? 0,
                     rangeStart,
                     rangeEnd));
@@ -450,7 +504,7 @@
     function renderFilteredGraphs() {
         updateRangeButtons();
         renderGraphs(
-            filterActivityLotsByRange(allActivityLots, selectedRange),
+            filterActivityLotsByRange(allActivityLots),
             allParkedWithoutTicketLots);
     }
 
@@ -479,10 +533,7 @@
         updateBrowserCurrentTime();
         await updateServerCurrentTime();
 
-        const center = getCenterEpochSeconds();
-        const halfWindow = Math.floor(getRangeWindowSeconds(selectedRange) / 2);
-        const startTime = center - halfWindow;
-        const endTime = center + halfWindow;
+        const { startTime, endTime } = getSelectedRangeBounds();
 
         const [activityResult, parkedResult] = await Promise.all([
             getJson(`/api/admin/lot-activity?startTime=${startTime}&endTime=${endTime}`),
