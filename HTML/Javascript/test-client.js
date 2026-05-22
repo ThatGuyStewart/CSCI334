@@ -306,6 +306,11 @@
 					return;
 				}
 
+				if (message.type === "bookings") {
+					applyBookingsMessage(message);
+					return;
+				}
+
 				log("WebSocket message", message);
 			}
 			catch {
@@ -483,16 +488,19 @@
 		const endTime = toEpochSeconds(bookingEndInput.value);
 
 		if (selectedLotId === null) {
+			showPopupMessage("Create Booking Failed", "Select a lot first.");
 			log("Create booking failed", "Select a lot first.");
 			return;
 		}
 
 		if (!registrationInput.value.trim()) {
+			showPopupMessage("Create Booking Failed", "Registration is required.");
 			log("Create booking failed", "Registration is required.");
 			return;
 		}
 
 		if (startTime === null || endTime === null) {
+			showPopupMessage("Create Booking Failed", "Start and end times are required.");
 			log("Create booking failed", "Start and end times are required.");
 			return;
 		}
@@ -508,15 +516,25 @@
 			const result = await postJson("/api/carpark/bookings", payload);
 			log("Create booking result", result);
 
-			if (result.ok) {
-				await loadLotAvailability();
-				await loadUpcomingBookings();
+			if (!result.ok) {
+				showPopupMessage(
+					"Create Booking Failed",
+					getErrorMessage(result, "Booking could not be created."));
+				return;
 			}
+
+			await loadLotAvailability();
+			await loadUpcomingBookings();
 		}
 		catch (error) {
+			showPopupMessage("Create Booking Failed", String(error));
 			log("Create booking failed", String(error));
 		}
 	});
+
+	function getBookingKey(booking) {
+		return `${booking.lotId}|${booking.registration}|${booking.startTime}|${booking.endTime}`;
+	}
 
 	function updateSelectedBookingLabel() {
 		if (!selectedBooking) {
@@ -525,21 +543,7 @@
 		}
 
 		selectedBookingElement.textContent =
-			`Lot ${selectedBooking.lotId}, Space ${selectedBooking.spaceId}, ${selectedBooking.registration}`;
-	}
-
-	function toDateTimeLocalValue(epochSeconds) {
-		const date = new Date(epochSeconds * 1000);
-		const year = date.getFullYear();
-		const month = String(date.getMonth() + 1).padStart(2, "0");
-		const day = String(date.getDate()).padStart(2, "0");
-		const hours = String(date.getHours()).padStart(2, "0");
-		const minutes = String(date.getMinutes()).padStart(2, "0");
-		return `${year}-${month}-${day}T${hours}:${minutes}`;
-	}
-
-	function getBookingKey(booking) {
-		return `${booking.lotId}|${booking.spaceId}|${booking.registration}|${booking.startTime}|${booking.endTime}`;
+			`Lot ${selectedBooking.lotId}, ${selectedBooking.registration}`;
 	}
 
 	function selectBooking(booking) {
@@ -575,7 +579,7 @@
 			}
 
 			element.innerHTML = `
-				<div><strong>Lot ${booking.lotId}, Space ${booking.spaceId}</strong></div>
+				<div><strong>Lot ${booking.lotId}</strong></div>
 				<div>Registration: ${booking.registration}</div>
 				<div>Start: ${new Date(booking.startTime * 1000).toLocaleString()}</div>
 				<div>End: ${new Date(booking.endTime * 1000).toLocaleString()}</div>
@@ -599,6 +603,7 @@
 		currentBookings = result.body.bookings ?? [];
 
 		if (selectedBooking) {
+			// Ensure the selected booking is still in the upcoming bookings list
 			const matchingBooking = currentBookings.find((booking) =>
 				getBookingKey(booking) === selectedBooking.key);
 
@@ -625,28 +630,31 @@
 		const endTime = toEpochSeconds(bookingEndInput.value);
 
 		if (!selectedBooking) {
+			showPopupMessage("Update Booking Failed", "Select a booking first.");
 			log("Update booking failed", "Select a booking first.");
 			return;
 		}
 
 		if (selectedLotId === null) {
+			showPopupMessage("Update Booking Failed", "Select a lot first.");
 			log("Update booking failed", "Select a lot first.");
 			return;
 		}
 
 		if (!registrationInput.value.trim()) {
+			showPopupMessage("Update Booking Failed", "Registration is required.");
 			log("Update booking failed", "Registration is required.");
 			return;
 		}
 
 		if (startTime === null || endTime === null) {
+			showPopupMessage("Update Booking Failed", "Start and end times are required.");
 			log("Update booking failed", "Start and end times are required.");
 			return;
 		}
 
 		const payload = {
 			originalLotId: selectedBooking.lotId,
-			originalSpaceId: selectedBooking.spaceId,
 			originalRegistration: selectedBooking.registration,
 			originalStartTime: selectedBooking.startTime,
 			originalEndTime: selectedBooking.endTime,
@@ -660,14 +668,20 @@
 			const result = await putJson("/api/bookings", payload);
 			log("Update booking result", result);
 
-			if (result.ok) {
-				selectedBooking = null;
-				updateSelectedBookingLabel();
-				await loadLotAvailability();
-				await loadUpcomingBookings();
+			if (!result.ok) {
+				showPopupMessage(
+					"Update Booking Failed",
+					getErrorMessage(result, "Booking could not be updated."));
+				return;
 			}
+
+			selectedBooking = null;
+			updateSelectedBookingLabel();
+			await loadLotAvailability();
+			await loadUpcomingBookings();
 		}
 		catch (error) {
+			showPopupMessage("Update Booking Failed", String(error));
 			log("Update booking failed", String(error));
 		}
 	});
@@ -680,7 +694,6 @@
 
 		const payload = {
 			lotId: selectedBooking.lotId,
-			spaceId: selectedBooking.spaceId,
 			registration: selectedBooking.registration,
 			startTime: selectedBooking.startTime,
 			endTime: selectedBooking.endTime
@@ -749,5 +762,44 @@
 
 	connectWebSocket();
 
-	
+
+	function getErrorMessage(result, fallbackMessage) {
+		if (!result || result.body === undefined || result.body === null) {
+			return fallbackMessage;
+		}
+
+		if (typeof result.body === "string") {
+			return result.body || fallbackMessage;
+		}
+
+		if (result.body.message) {
+			return result.body.message;
+		}
+
+		if (result.body.error) {
+			return result.body.error;
+		}
+
+		return fallbackMessage;
+	}
+
+	function showPopupMessage(title, message) {
+		window.alert(`${title}\n\n${message}`);
+	}
+
+	function applyBookingsMessage(message) {
+		currentBookings = message.bookings ?? [];
+
+		if (selectedBooking) {
+			const matchingBooking = currentBookings.find((booking) =>
+				getBookingKey(booking) === selectedBooking.key);
+
+			selectedBooking = matchingBooking
+				? { ...matchingBooking, key: getBookingKey(matchingBooking) }
+				: null;
+		}
+
+		updateSelectedBookingLabel();
+		renderBookings(currentBookings);
+	}
 })();
