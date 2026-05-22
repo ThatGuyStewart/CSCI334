@@ -11,8 +11,10 @@
 
 	const emailInput = document.getElementById("email");
 	const passwordInput = document.getElementById("password");
+	const confirmPasswordInput = document.getElementById("confirmPassword");
 
 	const loginButton = document.getElementById("loginButton");
+	const createAccountButton = document.getElementById("createAccountButton");
 	const userButton = document.getElementById("userButton");
 	const updatesButton = document.getElementById("updatesButton");
 
@@ -58,6 +60,46 @@
 			username: emailInput.value,
 			password: passwordInput.value
 		};
+	}
+
+	async function createAccount() {
+		const email = emailInput.value.trim();
+		const password = passwordInput.value;
+		const confirmPassword = confirmPasswordInput.value;
+
+		const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
+		if (!emailPattern.test(email)) {
+			window.alert("Enter a valid email address.");
+			return;
+		}
+
+		if (password.length < 4) {
+			window.alert("Password must be at least 4 characters.");
+			return;
+		}
+
+		if (password !== confirmPassword) {
+			window.alert("Passwords do not match.");
+			return;
+		}
+
+		const result = await postJson("/api/accounts", {
+			username: email,
+			password: password
+		});
+
+		log("Create account", result.body);
+
+		if (!result.ok) {
+			window.alert(result.body?.error ?? "Create account failed.");
+			return;
+		}
+
+		window.alert("Account created and logged in.");
+		await loadLotAvailability();
+		await loadUpcomingBookings();
+		reconnectWebSocket();
 	}
 
 	function updateSelectedLotLabel() {
@@ -400,6 +442,15 @@
 		}
 		catch (error) {
 			log("Get user failed", String(error));
+		}
+	});
+
+	createAccountButton.addEventListener("click", async () => {
+		try {
+			await createAccount();
+		}
+		catch (error) {
+			log("Create account error", String(error));
 		}
 	});
 
