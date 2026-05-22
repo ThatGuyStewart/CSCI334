@@ -157,6 +157,12 @@ OccupancyParameters Simulation::getOccupancyParameters(const std::tm& localTm) c
 
 	OccupancyParameters parameters{ 0.20, 0.40, 0.10, 0.20 };
 
+	const int minutesSinceMidnight = (localTm.tm_hour * 60) + localTm.tm_min;
+	constexpr int rampUpStart = 7 * 60 + 30;     // 07:30
+	constexpr int rampUpEnd = 10 * 60 + 30;      // 10:30
+	constexpr int windDownStart = 16 * 60 + 30;  // 16:30
+	constexpr int windDownEnd = 19 * 60 + 30;    // 19:30
+
 	if (localTm.tm_hour < 6)
 	{
 		parameters.normalMin = 0.00;
@@ -171,26 +177,32 @@ OccupancyParameters Simulation::getOccupancyParameters(const std::tm& localTm) c
 		parameters.disabledMin = 0.10;
 		parameters.disabledMax = 0.20;
 	}
-	else if (localTm.tm_hour == 8)
+	else if (minutesSinceMidnight >= rampUpStart && minutesSinceMidnight < rampUpEnd)
 	{
-		const double progress = localTm.tm_min / 60.0;
+		const double progress =
+			static_cast<double>(minutesSinceMidnight - rampUpStart) /
+			static_cast<double>(rampUpEnd - rampUpStart);
+
 		parameters.normalMin = 0.20 + (0.60 * progress);
 		parameters.normalMax = 0.30 + (0.70 * progress);
 		parameters.disabledMin = 0.00 + (0.40 * progress);
 		parameters.disabledMax = 0.30 + (0.60 * progress);
 	}
-	else if (localTm.tm_hour >= 9 && localTm.tm_hour < 16)
+	else if (minutesSinceMidnight >= rampUpEnd && minutesSinceMidnight < windDownStart)
 	{
 		parameters.normalMin = 0.80;
 		parameters.normalMax = 1.00;
 		parameters.disabledMin = 0.40;
 		parameters.disabledMax = 0.90;
 	}
-	else if (localTm.tm_hour == 16)
+	else if (minutesSinceMidnight >= windDownStart && minutesSinceMidnight < windDownEnd)
 	{
-		const double progress = localTm.tm_min / 60.0;
+		const double progress =
+			static_cast<double>(minutesSinceMidnight - windDownStart) /
+			static_cast<double>(windDownEnd - windDownStart);
+
 		parameters.normalMin = 0.80 + (-0.60 * progress);
-		parameters.normalMax = 1.00 + (- 0.80 * progress);
+		parameters.normalMax = 1.00 + (-0.80 * progress);
 		parameters.disabledMin = 0.80 + (-0.80 * progress);
 		parameters.disabledMax = 0.90 + (-0.50 * progress);
 	}
@@ -282,6 +294,7 @@ void Simulation::simulateParkingBehavior()
 
 		const OccupancyParameters parameters = getOccupancyParameters(localTm);
 		syncReservedSpacesWithBookings(std::chrono::system_clock::now());
+		//m_service.updateAvailabilityData();
 
 		auto candidates = buildCandidateChanges(
 			m_service.getAvailableNormal(0),
@@ -470,22 +483,50 @@ void Simulation::seedDatabaseWithHistoricalData()
 
 			const int bookingTargetPerLot = getHistoricalReservedBookingTarget(localTm);
 
-			for (int lotId : lotIds)
+			for (int dayOffset = 1; dayOffset <= 14; ++dayOffset)
 			{
-				for (int i = 0; i < bookingTargetPerLot; ++i)
+				for (int lotId : lotIds)
 				{
-					const auto startTime = slotStart + std::chrono::minutes(i * 15);
-					const auto endTime = startTime + std::chrono::hours(2);
+					std::time_t currentTime = std::time(nullptr);
+					std::tm localTm{};
+#if defined(_WIN32)
+					localtime_s(&localTm, &currentTime);
+#else
+					localTm = *std::localtime(&currentTime);
+#endif
 
-					trySeedHistoricalBooking(
-						tx,
-						emails,
-						bookingsByEmail,
-						lotId,
-						daysAgo == 0 ? "LIVE-" : "HIST-",
-						bookingCounter,
-						startTime,
-						endTime);
+					localTm.tm_mday += dayOffset;
+					localTm.tm_hour = 9;
+					localTm.tm_min = 0;
+					localTm.tm_sec = 0;
+					localTm.tm_isdst = -1;
+
+					const std::time_t slotEpoch = std::mktime(&localTm);
+					const auto slotStart = std::chrono::system_clock::from_time_t(slotEpoch);
+
+#if defined(_WIN32)
+					localtime_s(&localTm, &slotEpoch);
+#else
+					localTm = *std::localtime(&slotEpoch);
+#endif
+
+					const int bookingTargetPerLot = std::max(1, getHistoricalReservedBookingTarget(localTm));
+
+					for (int i = 0; i < bookingTargetPerLot; ++i)
+					{
+						const auto startTime = slotStart + std::chrono::minutes(i * 30) + std::chrono::minutes(lotId * 10);
+						const auto endTime = startTime + std::chrono::hours(2);
+
+						trySeedHistoricalBooking(
+							tx,
+							emails,
+							bookingsByEmail,
+							lotId,
+							"TEST-",
+							bookingCounter,
+							startTime,
+							endTime);
+					}
 				}
 			}
 		}
@@ -630,11 +671,6 @@ void Simulation::seedDatabaseWithHistoricalData()
 		"SET is_admin = TRUE "
 		"WHERE email = 'admin@example.com';");
 	tx.commit();
-
-	if (!m_db.loadAccounts())
-	{
-		throw std::runtime_error("Failed to reload accounts after seeding.");
-	}
 
 	m_service.loadCarPark();
 

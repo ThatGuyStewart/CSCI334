@@ -42,6 +42,7 @@ private:
 	void createFileRoute(const std::string& route, const std::string& path, const std::string& type);
 	void handleApiLogin(const httplib::Request& req, httplib::Response& res);
 	void handleApiUser(const httplib::Request& req, httplib::Response& res);
+	void handleApiCreateAccount(const httplib::Request& req, httplib::Response& res);
 	void handleApiUpdates(const httplib::Request& req, httplib::Response& res);
 	void handleApiPredictNormal(const httplib::Request& req, httplib::Response& res);
 	void handleApiPredictDisabled(const httplib::Request& req, httplib::Response& res);

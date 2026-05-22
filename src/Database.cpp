@@ -43,7 +43,6 @@ Database::Database(std::string host, std::string port, std::string dbname, std::
 	}
 
 	refreshBookingStatuses();
-	loadAccounts();
 
 	// Simulation will handle loading the car park data, so we initialize it with an empty car park here.
 	// This allows us to avoid potential issues with loading the car park data before the database is populated.
@@ -301,6 +300,68 @@ std::vector<std::pair<int, int>> Database::predictAvailableReserved(std::time_t 
 	}
 }
 
+std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> Database::getLotActivity(
+	std::time_t startTime,
+	std::time_t endTime)
+{
+	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
+
+	std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> activity;
+	if (!isConnected()) return activity;
+
+	try
+	{
+		pqxx::read_transaction tx(*m_connection);
+
+		pqxx::result result = tx.exec_params(
+			"WITH capacities AS ( "
+			"    SELECT "
+			"        lot_id, "
+			"        SUM(CASE WHEN type = 'normal' THEN 1 ELSE 0 END)::int AS normal_capacity, "
+			"        SUM(CASE WHEN type = 'disabled' THEN 1 ELSE 0 END)::int AS disabled_capacity, "
+			"        SUM(CASE WHEN type = 'reserved' THEN 1 ELSE 0 END)::int AS reserved_capacity "
+			"    FROM spaces "
+			"    GROUP BY lot_id "
+			") "
+			"SELECT "
+			"    a.lot_id, "
+			"    EXTRACT(EPOCH FROM a.snapshot_time)::bigint AS snapshot_epoch, "
+			"    GREATEST(0, c.normal_capacity - a.available_normal_spaces) AS normal_occupied, "
+			"    GREATEST(0, c.disabled_capacity - a.available_disabled_spaces) AS disabled_occupied, "
+			"    GREATEST(0, c.reserved_capacity - a.available_reserved_spaces) AS reserved_occupied "
+			"FROM availability a "
+			"INNER JOIN capacities c ON c.lot_id = a.lot_id "
+			"WHERE a.snapshot_time >= to_timestamp($1) "
+			"  AND a.snapshot_time <= to_timestamp($2) "
+			"ORDER BY a.lot_id, a.snapshot_time",
+			static_cast<long long>(startTime),
+			static_cast<long long>(endTime));
+
+		for (const auto& row : result)
+		{
+			const int currentLotId = row["lot_id"].as<int>();
+			const std::time_t snapshotTime = static_cast<std::time_t>(row["snapshot_epoch"].as<long long>());
+			const int normalOccupied = row["normal_occupied"].as<int>();
+			const int disabledOccupied = row["disabled_occupied"].as<int>();
+			const int reservedOccupied = row["reserved_occupied"].as<int>();
+
+			activity[currentLotId][snapshotTime] =
+			{
+				normalOccupied,
+				disabledOccupied,
+				reservedOccupied
+			};
+		}
+
+		return activity;
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << "Get lot activity failed: " << e.what() << std::endl;
+		return {};
+	}
+}
+
 std::vector<TempBooking> Database::getUpcomingBookings(const std::string& email)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
@@ -344,46 +405,6 @@ std::vector<TempBooking> Database::getUpcomingBookings(const std::string& email)
 	}
 }
 
-bool Database::loadAccounts()
-{
-	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
-
-	if (!isConnected()) return false;
-
-	try
-	{
-		pqxx::read_transaction tx(*m_connection);
-		pqxx::result result = tx.exec(
-			"SELECT email, password, is_admin FROM accounts ORDER BY email");
-
-		std::unordered_map<std::string, std::unique_ptr<Account>> accounts;
-		accounts.reserve(result.size());
-
-		for (const auto& row : result)
-		{
-			const std::string email = row["email"].as<std::string>();
-			const std::string password = row["password"].as<std::string>();
-			const bool isAdmin = row["is_admin"].as<bool>();
-
-			if (isAdmin)
-			{
-				accounts[email] = std::make_unique<AdminAccount>(email, password);
-			}
-			else
-			{
-				accounts[email] = std::make_unique<UserAccount>(email, password);
-			}
-		}
-
-		m_accounts = std::move(accounts);
-		return true;
-	}
-	catch (const std::exception& e)
-	{
-		std::cout << "Load accounts failed: " << e.what() << std::endl;
-		return false;
-	}
-}
 std::unique_ptr<CarPark> Database::loadCarPark()
 {
 	std::cout << "Loading data from database..." << std::endl;
@@ -588,18 +609,27 @@ bool Database::createAccount(const std::string& email, const std::string& passwo
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
 	if (!isConnected()) return false;
-	if (accountExists(email)) return false;
+	if (email.empty() || password.empty()) return false;
+
 	try
 	{
 		pqxx::work tx(*m_connection);
 
+		const pqxx::result existsResult = tx.exec_params(
+			"SELECT 1 FROM accounts WHERE email = $1 LIMIT 1",
+			email);
+
+		if (!existsResult.empty())
+		{
+			return false;
+		}
+
 		tx.exec_params(
-			"INSERT INTO accounts (email, password) VALUES ($1, $2)",
+			"INSERT INTO accounts (email, password, is_admin) VALUES ($1, $2, FALSE)",
 			email,
 			password);
 
 		tx.commit();
-		m_accounts[email] = std::make_unique<UserAccount>(email, password);
 		return true;
 	}
 	catch (const std::exception& e)
@@ -612,20 +642,173 @@ bool Database::createAccount(const std::string& email, const std::string& passwo
 bool Database::validateAccount(const std::string& email, const std::string& password)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
+	if (!isConnected()) return false;
 
-	const auto it = m_accounts.find(email);
-	if (it == m_accounts.end() || it->second == nullptr)
+	try
 	{
+		pqxx::read_transaction tx(*m_connection);
+
+		const pqxx::result result = tx.exec_params(
+			"SELECT 1 "
+			"FROM accounts "
+			"WHERE email = $1 AND password = $2 "
+			"LIMIT 1",
+			email,
+			password);
+
+		return !result.empty();
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << "Validate account failed: " << e.what() << std::endl;
 		return false;
 	}
-
-	return it->second->validatePassword(password);
 }
 
 bool Database::accountExists(const std::string& email)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
-	return m_accounts.find(email) != m_accounts.end();
+	if (!isConnected()) return false;
+
+	try
+	{
+		pqxx::read_transaction tx(*m_connection);
+
+		const pqxx::result result = tx.exec_params(
+			"SELECT 1 FROM accounts WHERE email = $1 LIMIT 1",
+			email);
+
+		return !result.empty();
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << "Account exists check failed: " << e.what() << std::endl;
+		return false;
+	}
+}
+
+bool Database::findAvailableReserved(
+	std::chrono::system_clock::time_point start,
+	std::chrono::system_clock::time_point end,
+	int lotId,
+	const std::optional<std::tuple<std::string, std::string, std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>>& bookingToExclude)
+{
+	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
+
+	if (!isConnected()) return false;
+	if (lotId <= 0) return false;
+	if (start >= end) return false;
+
+	try
+	{
+		refreshBookingStatuses();
+
+		pqxx::read_transaction tx(*m_connection);
+
+		const pqxx::result capacityResult = tx.exec_params(
+			"SELECT COUNT(*)::int AS reserved_capacity "
+			"FROM spaces "
+			"WHERE lot_id = $1 AND type = 'reserved'",
+			lotId);
+
+		if (capacityResult.empty())
+		{
+			return false;
+		}
+
+		const int reservedCapacity = capacityResult[0]["reserved_capacity"].as<int>();
+		if (reservedCapacity <= 0)
+		{
+			return false;
+		}
+
+		pqxx::result overlapResult;
+
+		if (bookingToExclude.has_value())
+		{
+			const auto& [email, registration, excludeStart, excludeEnd] = *bookingToExclude;
+
+			overlapResult = tx.exec_params(
+				"SELECT start_time, end_time "
+				"FROM bookings "
+				"WHERE lot_id = $1 "
+				"  AND status = 'Active' "
+				"  AND start_time < to_timestamp($2) "
+				"  AND end_time > to_timestamp($3) "
+				"  AND NOT (email = $4 "
+				"           AND registration = $5 "
+				"           AND EXTRACT(EPOCH FROM start_time)::bigint = $6 "
+				"           AND EXTRACT(EPOCH FROM end_time)::bigint = $7)",
+				lotId,
+				toEpochSeconds(end),
+				toEpochSeconds(start),
+				email,
+				registration,
+				toEpochSeconds(excludeStart),
+				toEpochSeconds(excludeEnd));
+		}
+		else
+		{
+			overlapResult = tx.exec_params(
+				"SELECT start_time, end_time "
+				"FROM bookings "
+				"WHERE lot_id = $1 "
+				"  AND status = 'Active' "
+				"  AND start_time < to_timestamp($2) "
+				"  AND end_time > to_timestamp($3)",
+				lotId,
+				toEpochSeconds(end),
+				toEpochSeconds(start));
+		}
+
+		struct BookingEvent
+		{
+			std::chrono::system_clock::time_point time;
+			int delta;
+		};
+
+		std::vector<BookingEvent> events;
+		events.reserve((overlapResult.size() + 1) * 2);
+
+		for (const auto& row : overlapResult)
+		{
+			events.push_back({ fromEpochSeconds(row["start_time"].as<double>()), +1 });
+			events.push_back({ fromEpochSeconds(row["end_time"].as<double>()), -1 });
+		}
+
+		events.push_back({ start, +1 });
+		events.push_back({ end, -1 });
+
+		std::sort(
+			events.begin(),
+			events.end(),
+			[](const BookingEvent& left, const BookingEvent& right)
+			{
+				if (left.time != right.time)
+				{
+					return left.time < right.time;
+				}
+
+				return left.delta < right.delta;
+			});
+
+		int concurrentBookings = 0;
+		for (const auto& event : events)
+		{
+			concurrentBookings += event.delta;
+			if (concurrentBookings > reservedCapacity)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << "Check reserved availability failed: " << e.what() << std::endl;
+		return false;
+	}
 }
 
 bool Database::insertBooking(
@@ -640,7 +823,7 @@ bool Database::insertBooking(
 	if (!isConnected()) return false;
 	if (registration.empty()) return false;
 	if (start >= end) return false;
-	if ((end - start) > std::chrono::hours(6)) return false;
+	if ((end - start) > std::chrono::hours(8)) return false;
 	if (lotId <= 0) return false;
 	if (!accountExists(email)) return false;
 
@@ -764,7 +947,7 @@ bool Database::updateBookingRecord(
 	if (originalLotId <= 0 || newLotId <= 0) return false;
 	if (originalRegistration.empty() || newRegistration.empty()) return false;
 	if (originalStart >= originalEnd || newStart >= newEnd) return false;
-	if ((newEnd - newStart) > std::chrono::hours(6)) return false;
+	if ((newEnd - newStart) > std::chrono::hours(8)) return false;
 
 	try
 	{
@@ -940,7 +1123,7 @@ bool Database::createSchema()
 
 			ALTER TABLE bookings
 			ADD CONSTRAINT chk_bookings_max_duration
-			CHECK (end_time <= start_time + INTERVAL '6 hours');
+			CHECK (end_time <= start_time + INTERVAL '8 hours');
 
 			CREATE TABLE IF NOT EXISTS availability
 			(
@@ -1001,62 +1184,6 @@ void Database::refreshBookingStatuses()
 	}
 }
 
-std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> Database::getLotActivity()
-{
-	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
-
-	std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> activity;
-	if (!isConnected()) return activity;
-
-	try
-	{
-		pqxx::read_transaction tx(*m_connection);
-
-		pqxx::result result = tx.exec(
-			"WITH capacities AS ( "
-			"    SELECT "
-			"        lot_id, "
-			"        SUM(CASE WHEN type = 'normal' THEN 1 ELSE 0 END)::int AS normal_capacity, "
-			"        SUM(CASE WHEN type = 'disabled' THEN 1 ELSE 0 END)::int AS disabled_capacity, "
-			"        SUM(CASE WHEN type = 'reserved' THEN 1 ELSE 0 END)::int AS reserved_capacity "
-			"    FROM spaces "
-			"    GROUP BY lot_id "
-			") "
-			"SELECT "
-			"    a.lot_id, "
-			"    EXTRACT(EPOCH FROM a.snapshot_time)::bigint AS snapshot_epoch, "
-			"    GREATEST(0, c.normal_capacity - a.available_normal_spaces) AS normal_occupied, "
-			"    GREATEST(0, c.disabled_capacity - a.available_disabled_spaces) AS disabled_occupied, "
-			"    GREATEST(0, c.reserved_capacity - a.available_reserved_spaces) AS reserved_occupied "
-			"FROM availability a "
-			"INNER JOIN capacities c ON c.lot_id = a.lot_id "
-			"ORDER BY a.lot_id, a.snapshot_time");
-
-		for (const auto& row : result)
-		{
-			const int currentLotId = row["lot_id"].as<int>();
-			const std::time_t snapshotTime = static_cast<std::time_t>(row["snapshot_epoch"].as<long long>());
-			const int normalOccupied = row["normal_occupied"].as<int>();
-			const int disabledOccupied = row["disabled_occupied"].as<int>();
-			const int reservedOccupied = row["reserved_occupied"].as<int>();
-
-			activity[currentLotId][snapshotTime] =
-			{
-				normalOccupied,
-				disabledOccupied,
-				reservedOccupied
-			};
-		}
-
-		return activity;
-	}
-	catch (const std::exception& e)
-	{
-		std::cout << "Get lot activity failed: " << e.what() << std::endl;
-		return {};
-	}
-}
-
 bool Database::saveAvailabilitySnapshot(
 	std::time_t snapshotTime,
 	const std::unordered_map<int, std::vector<int>>& availabilityByLot)
@@ -1107,12 +1234,31 @@ bool Database::saveAvailabilitySnapshot(
 bool Database::isAdminAccount(const std::string& email)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
+	if (!isConnected()) return false;
 
-	const auto it = m_accounts.find(email);
-	return it != m_accounts.end() && it->second != nullptr && it->second->isAdmin();
+	try
+	{
+		pqxx::read_transaction tx(*m_connection);
+
+		const pqxx::result result = tx.exec_params(
+			"SELECT is_admin FROM accounts WHERE email = $1 LIMIT 1",
+			email);
+
+		return !result.empty() && result[0]["is_admin"].as<bool>();
+	}
+	catch (const std::exception& e)
+	{
+		std::cout << "Is admin account check failed: " << e.what() << std::endl;
+		return false;
+	}
 }
 
-std::vector<TempBooking> Database::getCurrentBookingsForLot(int lotId)
+std::vector<TempBooking> Database::getBookingsForLot(int lotId)
+{
+	return getBookingsForLot(lotId, std::time(nullptr));
+}
+
+std::vector<TempBooking> Database::getBookingsForLot(int lotId, std::time_t timePoint)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_dbMutex);
 
@@ -1132,10 +1278,11 @@ std::vector<TempBooking> Database::getCurrentBookingsForLot(int lotId)
 			"FROM bookings "
 			"WHERE lot_id = $1 "
 			"  AND status = 'Active' "
-			"  AND start_time <= NOW() "
-			"  AND end_time > NOW() "
+			"  AND start_time <= to_timestamp($2) "
+			"  AND end_time > to_timestamp($2) "
 			"ORDER BY start_time, email, registration",
-			lotId);
+			lotId,
+			static_cast<long long>(timePoint));
 
 		bookings.reserve(result.size());
 		for (const auto& row : result)
@@ -1154,7 +1301,7 @@ std::vector<TempBooking> Database::getCurrentBookingsForLot(int lotId)
 	}
 	catch (const std::exception& e)
 	{
-		std::cout << "Get current bookings for lot failed: " << e.what() << std::endl;
+		std::cout << "Get bookings for lot failed: " << e.what() << std::endl;
 		return {};
 	}
 }

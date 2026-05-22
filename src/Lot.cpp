@@ -221,6 +221,16 @@ std::vector<std::pair<int, bool>> Lot::getAvailableDisabled()
 	return available;
 }
 
+std::vector<std::pair<int, bool>> Lot::getAvailableReserved()
+{
+	std::vector<std::pair<int, bool>> available;
+	for (const auto& [id, space] : m_reservedSpaces)
+	{
+		available.push_back(std::make_pair(id, !space->isOccupied()));
+	}
+	return available;
+}
+
 bool Lot::bookingExists(
 	std::string email,
 	std::string registration,

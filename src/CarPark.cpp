@@ -276,6 +276,31 @@ std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> CarPark::getAvail
 	return availability;
 }
 
+std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> CarPark::getAvailableReserved(int lotId)
+{
+	std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> availability;
+
+	if (lotId == 0)
+	{
+		for (const auto& [id, lot] : m_lots)
+		{
+			if (lot)
+			{
+				availability.push_back(std::make_pair(id, lot->getAvailableReserved()));
+			}
+		}
+		return availability;
+	}
+
+	auto it = m_lots.find(lotId);
+	if (it != m_lots.end() && it->second)
+	{
+		availability.push_back(std::make_pair(lotId, it->second->getAvailableReserved()));
+	}
+
+	return availability;
+}
+
 bool CarPark::bookingExists(
 	
 	std::string email,

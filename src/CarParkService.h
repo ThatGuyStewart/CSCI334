@@ -72,11 +72,13 @@ class CarParkService
 		std::vector<std::pair<int, int>> predictAvailableReserved(std::time_t futureTime, int lotId = 0);
 		std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableNormal(int lotId = 0);
 		std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableDisabled(int lotId = 0);
-		std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> getLotActivity();
-		void stop();
+		std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableReserved(int lotId = 0);
+		std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> getLotActivity(std::time_t startTime, std::time_t endTime);
 		bool isAdminAccount(const std::string& email);
 		std::unordered_map<int, int> getParkedWithoutTicketCounts();
-		std::vector<TempBooking> getCurrentBookingsForLot(int lotId);
+		std::vector<TempBooking> getBookingsForLot(int lotId);
+		std::vector<TempBooking> getBookingsForLot(int lotId, std::time_t timePoint);
 		int getReservedCapacity(int lotId) const;
+		void stop();
 };
 

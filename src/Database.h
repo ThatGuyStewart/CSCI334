@@ -1,6 +1,5 @@
 #pragma once
 #include "ThreadControl.h"
-#include "Account.h"
 #include "Booking.h"
 #include "CarPark.h"
 #include <chrono>
@@ -29,10 +28,8 @@ class Database
 private:
 	mutable std::recursive_mutex m_dbMutex;
 	std::unique_ptr<pqxx::connection> m_connection;
-	std::unordered_map<std::string, std::unique_ptr<Account>> m_accounts;
 
 	bool connect(std::string& host, std::string& port, std::string& dbname, std::string& user, std::string& password);
-	bool loadAccounts();
 	bool createSchema();
 	void refreshBookingStatuses();
 	std::unordered_map<int, std::unique_ptr<Lot>> loadLots();
@@ -49,6 +46,12 @@ public:
 	bool createAccount(const std::string& email, const std::string& password);
 	bool validateAccount(const std::string& email, const std::string& password);
 	bool accountExists(const std::string& email);
+	bool findAvailableReserved(
+		std::chrono::system_clock::time_point start,
+		std::chrono::system_clock::time_point end,
+		int lotId,
+		const std::optional<std::tuple<std::string, std::string, std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>>& bookingToExclude = std::nullopt);
+
 	bool insertBooking(
 		const std::string& email,
 		const std::string& registration,
@@ -78,8 +81,9 @@ public:
 	std::vector<std::pair<int, int>> predictAvailableNormal(std::time_t futureTime, int lotId = 0);
 	std::vector<std::pair<int, int>> predictAvailableDisabled(std::time_t futureTime, int lotId = 0);
 	std::vector<std::pair<int, int>> predictAvailableReserved(std::time_t futureTime, int lotId = 0);
-	std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> getLotActivity();
+	std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> getLotActivity(std::time_t startTime, std::time_t endTime);
 	bool saveAvailabilitySnapshot(std::time_t snapshotTime, const std::unordered_map<int, std::vector<int>>& availabilityByLot);
 	bool isAdminAccount(const std::string& email);
-	std::vector<TempBooking> getCurrentBookingsForLot(int lotId);
+	std::vector<TempBooking> getBookingsForLot(int lotId);
+	std::vector<TempBooking> getBookingsForLot(int lotId, std::time_t timePoint);
 };

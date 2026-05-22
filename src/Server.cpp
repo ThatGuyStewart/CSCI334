@@ -9,7 +9,7 @@
 #include <fstream>
 #include <ctime>
 
-namespace
+namespace // Helper functions for parameter parsing and message building
 {
 	bool tryGetTimeParam(const httplib::Request& req, const char* name, std::time_t& value)
 	{
@@ -87,12 +87,36 @@ namespace
 				});
 		}
 
+		const auto reservedAvailability = service.getAvailableReserved(0);
+
+		nlohmann::json reservedLots = nlohmann::json::array();
+		for (const auto& lotEntry : reservedAvailability)
+		{
+			nlohmann::json spaces = nlohmann::json::array();
+
+			for (const auto& spaceEntry : lotEntry.second)
+			{
+				spaces.push_back(
+					{
+						{"spaceId", spaceEntry.first},
+						{"available", spaceEntry.second}
+					});
+			}
+
+			reservedLots.push_back(
+				{
+					{"lotId", lotEntry.first},
+					{"spaces", spaces}
+				});
+		}
+
 		return
 		{
 			{"type", "availability"},
 			{"serverTime", std::chrono::system_clock::to_time_t(std::chrono::system_clock::now())},
 			{"normalLots", normalLots},
-			{"disabledLots", disabledLots}
+			{"disabledLots", disabledLots},
+			{"reservedLots", reservedLots}
 		};
 	}
 
@@ -118,6 +142,12 @@ namespace
 			{"type", "bookings"},
 			{"bookings", items}
 		};
+	}
+
+	bool isValidEmail(const std::string& email)
+	{
+		static const std::regex emailPattern(R"(^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$)");
+		return std::regex_match(email, emailPattern);
 	}
 }
 
@@ -213,6 +243,7 @@ void Server::createRoutes()
 	// Create API routes
 	Post("/api/login", [&](const httplib::Request& req, httplib::Response& res) { handleApiLogin(req, res); });
 	Get("/api/user", [&](const httplib::Request& req, httplib::Response& res) { handleApiUser(req, res); });
+	Post("/api/accounts", [&](const httplib::Request& req, httplib::Response& res) { handleApiCreateAccount(req, res); });
 	Get("/api/updates", [&](const httplib::Request& req, httplib::Response& res) { handleApiUpdates(req, res); });
 
 	Post("/api/admin/login", [&](const httplib::Request& req, httplib::Response& res) { handleApiAdminLogin(req, res); });
@@ -303,6 +334,67 @@ void Server::handleApiUser(const httplib::Request& req, httplib::Response& res)
 	res.status = 401;
 	res.set_content(R"({"error":"unauthenticated"})", "application/json");
 }
+
+void Server::handleApiCreateAccount(const httplib::Request& req, httplib::Response& res)
+{
+	try
+	{
+		auto j = nlohmann::json::parse(req.body);
+		const std::string user = j.value("username", "");
+		const std::string pass = j.value("password", "");
+
+		if (!isValidEmail(user))
+		{
+			res.status = 400;
+			res.set_content(R"({"error":"username must be a valid email address"})", "application/json");
+			return;
+		}
+
+		if (pass.size() < 4)
+		{
+			res.status = 400;
+			res.set_content(R"({"error":"password must be at least 4 characters"})", "application/json");
+			return;
+		}
+
+		if (!m_service.createAccount(user, pass))
+		{
+			res.status = 400;
+			res.set_content(R"({"error":"account could not be created"})", "application/json");
+			return;
+		}
+
+		const std::string token = createToken();
+		{
+			std::lock_guard<std::mutex> lock(m_sessions.sessionMutex);
+
+			auto oldToken = m_sessions.usernameToToken.find(user);
+			if (oldToken != m_sessions.usernameToToken.end())
+			{
+				m_sessions.tokenToUsername.erase(oldToken->second);
+			}
+
+			m_sessions.tokenToUsername[token] = user;
+			m_sessions.usernameToToken[user] = token;
+		}
+
+		res.set_header("Set-Cookie", std::string("session=") + token + "; Path=/; HttpOnly; Secure; SameSite=Strict");
+
+		nlohmann::json reply =
+		{
+			{"status", "ok"},
+			{"user", user}
+		};
+
+		res.set_content(reply.dump(), "application/json");
+	}
+	catch (const nlohmann::json::parse_error&)
+	{
+		res.status = 400;
+		res.set_content(R"({"error":"invalid json"})", "application/json");
+	}
+}
+
 void Server::handleApiAdminLogin(const httplib::Request& req, httplib::Response& res)
 {
 	try
@@ -402,7 +494,7 @@ void Server::handleApiAdminLotActivity(const httplib::Request& req, httplib::Res
 		return;
 	}
 
-	const auto activity = m_service.getLotActivity();
+	const auto activity = m_service.getLotActivity(startTime, endTime);
 	const std::time_t serverNow = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 
 	auto findPredictedAvailableForLot =
@@ -435,21 +527,8 @@ void Server::handleApiAdminLotActivity(const httplib::Request& req, httplib::Res
 		std::vector<std::pair<std::time_t, std::vector<int>>> snapshots;
 		for (const auto& [snapshotTime, values] : activity.at(lotId))
 		{
-			if (snapshotTime < startTime || snapshotTime > endTime)
-			{
-				continue;
-			}
-
 			snapshots.emplace_back(snapshotTime, values);
 		}
-
-		std::sort(
-			snapshots.begin(),
-			snapshots.end(),
-			[](const auto& left, const auto& right)
-			{
-				return left.first < right.first;
-			});
 
 		int normalTotal = 0;
 		int disabledTotal = 0;
@@ -499,7 +578,9 @@ void Server::handleApiAdminLotActivity(const httplib::Request& req, httplib::Res
 		const std::time_t firstFutureQuarter =
 			((std::max(startTime, serverNow + 1) + 899) / 900) * 900;
 
-		for (std::time_t pointTime = firstFutureQuarter; pointTime <= endTime; pointTime += 15 * 60)
+		const std::time_t predictionStep = ((endTime - startTime) > (7 * 24 * 60 * 60)) ? 60 * 60 : 15 * 60;
+
+		for (std::time_t pointTime = firstFutureQuarter; pointTime <= endTime; pointTime += predictionStep)
 		{
 			const auto normalPredictions = m_service.predictAvailableNormal(pointTime, lotId);
 			const auto disabledPredictions = m_service.predictAvailableDisabled(pointTime, lotId);
@@ -623,7 +704,12 @@ void Server::handleApiAdminCurrentBookings(const httplib::Request& req, httplib:
 		return;
 	}
 
-	const auto bookings = m_service.getCurrentBookingsForLot(lotId);
+	const std::time_t selectedTime =
+		req.has_param("time")
+		? static_cast<std::time_t>(std::stoll(req.get_param_value("time")))
+		: std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+
+	const auto bookings = m_service.getBookingsForLot(lotId, selectedTime);
 
 	nlohmann::json items = nlohmann::json::array();
 	for (const auto& booking : bookings)
@@ -642,6 +728,7 @@ void Server::handleApiAdminCurrentBookings(const httplib::Request& req, httplib:
 	{
 		{"status", "ok"},
 		{"lotId", lotId},
+		{"time", selectedTime},
 		{"bookings", items}
 	};
 
@@ -1382,11 +1469,14 @@ void Server::start()
 	}
 }
 
-void Server::stop() 
+void Server::stop()
 {
 	if (!m_broadcasterThread.running.exchange(false)) return;
 
 	m_broadcasterThread.cv.notify_all();
+
+	// Stop the listening server first so Server::start() can return.
+	httplib::SSLServer::stop();
 
 	std::vector<httplib::ws::WebSocket*> websocketsToClose;
 	{
@@ -1412,6 +1502,4 @@ void Server::stop()
 		{
 		}
 	}
-
-	httplib::SSLServer::stop();
 }
