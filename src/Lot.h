@@ -52,6 +52,7 @@ public:
 
 	int getNumberOfAvailableNormal();
 	int getNumberOfAvailableDisabled();
+	int getNumberOfAvailableReserved();
 	std::vector<std::pair<int, bool>> getAvailableNormal();
 	std::vector<std::pair<int, bool>> getAvailableDisabled();
 

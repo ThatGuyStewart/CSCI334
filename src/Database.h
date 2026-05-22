@@ -77,6 +77,7 @@ public:
 	std::vector<TempBooking> getUpcomingBookings(const std::string& email);
 	std::vector<std::pair<int, int>> predictAvailableNormal(std::time_t futureTime, int lotId = 0);
 	std::vector<std::pair<int, int>> predictAvailableDisabled(std::time_t futureTime, int lotId = 0);
+	std::vector<std::pair<int, int>> predictAvailableReserved(std::time_t futureTime, int lotId = 0);
 	std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> getLotActivity();
 	bool saveAvailabilitySnapshot(std::time_t snapshotTime, const std::unordered_map<int, std::vector<int>>& availabilityByLot);
 	bool isAdminAccount(const std::string& email);

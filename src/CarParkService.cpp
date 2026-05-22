@@ -56,7 +56,7 @@ void CarParkService::startAvailabilityUpdater()
 	m_availabilityUpdater.thread = std::thread([this]()
 	{
 		std::unique_lock<std::mutex> lock(m_availabilityUpdater.mutex);
-
+		int counter = 0;
 		while (m_availabilityUpdater.running.load())
 		{
 			const bool stopping = m_availabilityUpdater.cv.wait_for(
@@ -65,10 +65,14 @@ void CarParkService::startAvailabilityUpdater()
 				[this]() { return !m_availabilityUpdater.running.load(); });
 
 			if (stopping) break;
-
-			lock.unlock();
-			updateAvailabilityData();
-			lock.lock();
+			if (counter == 14)
+			{
+				lock.unlock();
+				updateAvailabilityData();
+				lock.lock();
+				counter = 0;
+			}
+			else counter++;
 		}
 	});
 }
@@ -94,25 +98,38 @@ bool CarParkService::updateAvailabilityData()
 	{
 		const auto normalAvailability = m_carPark->getNumberOfAvailableNormal(0);
 		const auto disabledAvailability = m_carPark->getNumberOfAvailableDisabled(0);
+		const auto reservedAvailability = m_carPark->getNumberOfAvailableReserved(0);
 		const auto snapshotTime = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 
 		std::unordered_map<int, std::vector<int>> availabilityByLot;
-		availabilityByLot.reserve(std::max(normalAvailability.size(), disabledAvailability.size()));
+		availabilityByLot.reserve(std::max({ normalAvailability.size(), disabledAvailability.size(), reservedAvailability.size() }));
 
 		for (const auto& [lotId, availableNormalSpaces] : normalAvailability)
 		{
-			availabilityByLot[lotId] = { availableNormalSpaces, 0 };
+			availabilityByLot[lotId] = { availableNormalSpaces, 0, 0 };
 		}
 
 		for (const auto& [lotId, availableDisabledSpaces] : disabledAvailability)
 		{
 			if (availabilityByLot.find(lotId) == availabilityByLot.end())
 			{
-				availabilityByLot[lotId] = { 0, availableDisabledSpaces };
+				availabilityByLot[lotId] = { 0, availableDisabledSpaces, 0 };
 			}
 			else
 			{
 				availabilityByLot[lotId][1] = availableDisabledSpaces;
+			}
+		}
+
+		for (const auto& [lotId, availableReservedSpaces] : reservedAvailability)
+		{
+			if (availabilityByLot.find(lotId) == availabilityByLot.end())
+			{
+				availabilityByLot[lotId] = { 0, 0, availableReservedSpaces };
+			}
+			else
+			{
+				availabilityByLot[lotId][2] = availableReservedSpaces;
 			}
 		}
 
@@ -360,6 +377,11 @@ std::vector<std::pair<int, int>> CarParkService::predictAvailableNormal(std::tim
 std::vector<std::pair<int, int>> CarParkService::predictAvailableDisabled(std::time_t futureTime, int lotId)
 {
 	return m_database.predictAvailableDisabled(futureTime, lotId);
+}
+
+std::vector<std::pair<int, int>> CarParkService::predictAvailableReserved(std::time_t futureTime, int lotId)
+{
+	return m_database.predictAvailableReserved(futureTime, lotId);
 }
 
 std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> CarParkService::getAvailableNormal(int lotId)

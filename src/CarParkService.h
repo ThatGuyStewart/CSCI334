@@ -69,6 +69,7 @@ class CarParkService
 		std::string getLastBookingFailureMessage() const;
 		std::vector<std::pair<int, int>> predictAvailableNormal(std::time_t futureTime, int lotId = 0);
 		std::vector<std::pair<int, int>> predictAvailableDisabled(std::time_t futureTime, int lotId = 0);
+		std::vector<std::pair<int, int>> predictAvailableReserved(std::time_t futureTime, int lotId = 0);
 		std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableNormal(int lotId = 0);
 		std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> getAvailableDisabled(int lotId = 0);
 		std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> getLotActivity();
