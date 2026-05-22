@@ -17,7 +17,10 @@
     const graphCenterTimeInput = document.getElementById("graphCenterTime");
     const browserCurrentTimeElement = document.getElementById("browserCurrentTime");
     const serverCurrentTimeElement = document.getElementById("serverCurrentTime");
+    const liveLotGridElement = document.getElementById("liveLotGrid");
+    const bookingsTimeInput = document.getElementById("bookingsTime");
 
+    let adminSocket = null;
     let dashboardRefreshTimer = null;
     let allActivityLots = [];
     let allParkedWithoutTicketLots = [];
@@ -40,6 +43,31 @@
         const hours = String(date.getHours()).padStart(2, "0");
         const minutes = String(date.getMinutes()).padStart(2, "0");
         return `${year}-${month}-${day}T${hours}:${minutes}`;
+    }
+
+    function connectAdminWebSocket() {
+        if (adminSocket && (adminSocket.readyState === WebSocket.OPEN || adminSocket.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
+
+        const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+        adminSocket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+
+        adminSocket.addEventListener("message", (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                if (message.type === "availability") {
+                    renderLiveLots(message);
+                }
+            }
+            catch (error) {
+                console.error("Admin WebSocket message error", error);
+            }
+        });
+
+        adminSocket.addEventListener("close", () => {
+            adminSocket = null;
+        });
     }
 
     async function postJson(url, body) {
@@ -81,7 +109,91 @@
     function showError(message) {
         window.alert(message);
     }
+    function mergeLiveLotData(normalLots, disabledLots, reservedLots) {
+        const lots = new Map();
 
+        function ensureLot(lotId) {
+            if (!lots.has(lotId)) {
+                lots.set(lotId, {
+                    lotId,
+                    normalSpaces: [],
+                    disabledSpaces: [],
+                    reservedSpaces: []
+                });
+            }
+
+            return lots.get(lotId);
+        }
+
+        for (const lot of normalLots ?? []) {
+            ensureLot(lot.lotId).normalSpaces = lot.spaces ?? [];
+        }
+
+        for (const lot of disabledLots ?? []) {
+            ensureLot(lot.lotId).disabledSpaces = lot.spaces ?? [];
+        }
+
+        for (const lot of reservedLots ?? []) {
+            ensureLot(lot.lotId).reservedSpaces = lot.spaces ?? [];
+        }
+
+        return Array.from(lots.values()).sort((a, b) => a.lotId - b.lotId);
+    }
+
+    function createLiveSpaceElement(space, extraClass = "") {
+        const element = document.createElement("div");
+        element.className = `space ${space.available ? "available" : "unavailable"} ${extraClass}`.trim();
+        element.textContent = space.spaceId;
+        return element;
+    }
+
+    function renderLiveSpaceSection(title, spaces, extraClass = "") {
+        const section = document.createElement("div");
+        section.className = "space-section";
+
+        const heading = document.createElement("h4");
+        heading.textContent = title;
+        section.appendChild(heading);
+
+        const grid = document.createElement("div");
+        grid.className = "space-grid";
+
+        for (const space of [...(spaces ?? [])].sort((a, b) => a.spaceId - b.spaceId)) {
+            grid.appendChild(createLiveSpaceElement(space, extraClass));
+        }
+
+        section.appendChild(grid);
+        return section;
+    }
+
+    function renderLiveLots(message) {
+        if (!liveLotGridElement) {
+            return;
+        }
+
+        const lots = mergeLiveLotData(message.normalLots, message.disabledLots, message.reservedLots);
+        liveLotGridElement.innerHTML = "";
+
+        if (!lots.length) {
+            liveLotGridElement.textContent = "No live lot data available.";
+            return;
+        }
+
+        for (const lot of lots) {
+            const card = document.createElement("div");
+            card.className = "lot-card";
+
+            const title = document.createElement("h3");
+            title.textContent = `Lot ${lot.lotId}`;
+            card.appendChild(title);
+
+            card.appendChild(renderLiveSpaceSection("Normal Spaces", lot.normalSpaces));
+            card.appendChild(renderLiveSpaceSection("Disabled Spaces", lot.disabledSpaces, "disabled"));
+            card.appendChild(renderLiveSpaceSection("Reserved Spaces", lot.reservedSpaces));
+
+            liveLotGridElement.appendChild(card);
+        }
+    }
     function setLoggedIn(user) {
         adminUserElement.textContent = user;
         loginPanel.classList.add("hidden");
@@ -91,8 +203,13 @@
             graphCenterTimeInput.value = toDateTimeLocalValue(Math.floor(Date.now() / 1000));
         }
 
+        if (bookingsTimeInput && !bookingsTimeInput.value) {
+            bookingsTimeInput.value = toDateTimeLocalValue(Math.floor(Date.now() / 1000));
+        }
+
         updateBrowserCurrentTime();
         startDashboardAutoRefresh();
+        connectAdminWebSocket();
     }
 
     function setLoggedOut() {
@@ -171,8 +288,10 @@
     }
 
     function getSelectedRangeBounds() {
-        const endTime = getCenterEpochSeconds();
-        const startTime = endTime - getRangeWindowSeconds(selectedRange);
+        const centerTime = getCenterEpochSeconds();
+        const halfWindow = Math.floor(getRangeWindowSeconds(selectedRange) / 2);
+        const startTime = centerTime - halfWindow;
+        const endTime = centerTime + halfWindow;
 
         return { startTime, endTime };
     }
@@ -564,7 +683,6 @@
         allActivityLots = activityResult.body?.lots ?? [];
         renderFilteredGraphs();
     }
-
     async function loadCurrentBookings() {
         const lotId = Number(lotSelectorElement.value);
         if (!lotId) {
@@ -572,9 +690,10 @@
             return;
         }
 
-        const result = await getJson(`/api/admin/current-bookings?lotId=${lotId}`);
+        const selectedTime = toEpochSeconds(bookingsTimeInput.value) ?? Math.floor(Date.now() / 1000);
+        const result = await getJson(`/api/admin/current-bookings?lotId=${lotId}&time=${selectedTime}`);
         if (!result.ok) {
-            showError(result.body?.error ?? "Failed to load current bookings.");
+            showError(result.body?.error ?? "Failed to load bookings.");
             return;
         }
 
