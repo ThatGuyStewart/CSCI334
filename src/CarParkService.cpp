@@ -51,30 +51,36 @@ void CarParkService::startAvailabilityUpdater()
 	if (m_availabilityUpdater.thread.joinable()) return;
 
 	m_availabilityUpdater.running.store(true);
-	updateAvailabilityData();
 
 	m_availabilityUpdater.thread = std::thread([this]()
-	{
-		std::unique_lock<std::mutex> lock(m_availabilityUpdater.mutex);
-		int counter = 0;
-		while (m_availabilityUpdater.running.load())
 		{
-			const bool stopping = m_availabilityUpdater.cv.wait_for(
-				lock,
-				std::chrono::minutes(1),
-				[this]() { return !m_availabilityUpdater.running.load(); });
+			std::unique_lock<std::mutex> lock(m_availabilityUpdater.mutex);
 
-			if (stopping) break;
-			if (counter == 14)
+			while (m_availabilityUpdater.running.load())
 			{
-				lock.unlock();
-				updateAvailabilityData();
-				lock.lock();
-				counter = 0;
+				const bool stopping = m_availabilityUpdater.cv.wait_for(
+					lock,
+					std::chrono::minutes(1),
+					[this]() { return !m_availabilityUpdater.running.load(); });
+
+				if (stopping) break;
+
+				const std::time_t now = std::time(nullptr);
+				std::tm localTm{};
+#if defined(_WIN32)
+				localtime_s(&localTm, &now);
+#else
+				localTm = *std::localtime(&now);
+#endif
+
+				if ((localTm.tm_min % 15) == 0)
+				{
+					lock.unlock();
+					updateAvailabilityData();
+					lock.lock();
+				}
 			}
-			else counter++;
-		}
-	});
+		});
 }
 
 void CarParkService::stopAvailabilityUpdater()
@@ -212,7 +218,7 @@ bool CarParkService::createBooking(
 		return false;
 	}
 
-	if (m_carPark->findAvailableReservedSpace(start, end, lotId) == -1)
+	if (!m_database.findAvailableReserved(start, end, lotId))
 	{
 		setLastBookingFailureMessage("No reserved spaces are available for that time range.");
 		return false;
@@ -300,9 +306,9 @@ bool CarParkService::updateBooking(
 		return false;
 	}
 
-	if ((newEnd - newStart) > std::chrono::hours(6))
+	if ((newEnd - newStart) > std::chrono::hours(8))
 	{
-		setLastBookingFailureMessage("Bookings cannot exceed 6 hours.");
+		setLastBookingFailureMessage("Bookings cannot exceed 8 hours.");
 		return false;
 	}
 
@@ -318,7 +324,8 @@ bool CarParkService::updateBooking(
 		std::cout << "Update booking warning: original in-memory booking was not found." << std::endl;
 	}
 
-	if (m_carPark->findAvailableReservedSpace(newStart, newEnd, newLotId) == -1)
+	if (!m_database.findAvailableReserved(newStart, newEnd, newLotId,
+		std::make_optional(std::make_tuple(email, originalRegistration, originalStart, originalEnd))))
 	{
 		if (removedFromMemory)
 		{
@@ -396,9 +403,15 @@ std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> CarParkService::g
 	return m_carPark->getAvailableDisabled(lotId);
 }
 
-std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> CarParkService::getLotActivity()
+std::vector<std::pair<int, std::vector<std::pair<int, bool>>>> CarParkService::getAvailableReserved(int lotId)
 {
-	return m_database.getLotActivity();
+	if (!m_carPark) return {};
+	return m_carPark->getAvailableReserved(lotId);
+}
+
+std::unordered_map<int, std::unordered_map<std::time_t, std::vector<int>>> CarParkService::getLotActivity(std::time_t startTime, std::time_t endTime)
+{
+	return m_database.getLotActivity(startTime, endTime);
 }
 
 void CarParkService::stop()
@@ -416,9 +429,14 @@ std::unordered_map<int, int> CarParkService::getParkedWithoutTicketCounts()
 	return m_carPark ? m_carPark->getParkedWithoutTicketByLot() : std::unordered_map<int, int>{};
 }
 
-std::vector<TempBooking> CarParkService::getCurrentBookingsForLot(int lotId)
+std::vector<TempBooking> CarParkService::getBookingsForLot(int lotId)
 {
-	return m_database.getCurrentBookingsForLot(lotId);
+	return m_database.getBookingsForLot(lotId);
+}
+
+std::vector<TempBooking> CarParkService::getBookingsForLot(int lotId, std::time_t timePoint)
+{
+	return m_database.getBookingsForLot(lotId, timePoint);
 }
 
 int CarParkService::getReservedCapacity(int lotId) const

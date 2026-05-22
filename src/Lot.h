@@ -55,6 +55,7 @@ public:
 	int getNumberOfAvailableReserved();
 	std::vector<std::pair<int, bool>> getAvailableNormal();
 	std::vector<std::pair<int, bool>> getAvailableDisabled();
+	std::vector<std::pair<int, bool>> getAvailableReserved();
 
 	bool bookingExists(
 		std::string email,
